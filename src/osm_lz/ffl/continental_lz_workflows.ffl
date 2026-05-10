@@ -1,0 +1,172 @@
+// Continental Low-Zoom Road Infrastructure Pipelines
+//
+// Orchestrates the LZ algorithm (zoom levels 2-7) across three regions:
+//   - United States (full country PBF)
+//   - Canada (full country PBF)
+//   - Europe (12 countries in parallel)
+//
+// Each region follows the pattern:
+//   OSM cache -> GraphHopper build -> BuildZoomLayers
+
+/** Builds low-zoom road tile layers from OSM data across US, Canada, and Europe. */
+namespace continental.lz {
+    use osm.types
+    use continental.types
+    uses osm.cache.NorthAmerica
+    uses osm.cache.GraphHopper.NorthAmerica
+    uses osm.cache.Europe
+    uses osm.cache.GraphHopper.Europe
+    uses osm.Roads.ZoomBuilder
+
+    // ── United States LZ ──────────────────────────────────────────────
+
+    /** Builds low-zoom road layers for the entire United States. */
+    workflow BuildUSLowZoom(output_base: String = "/data/lz-output") => (
+        result: RegionLZResult
+    ) andThen {
+        // Step 1: Get OSM cache for full US
+        us_osm = osm.cache.NorthAmerica.UnitedStates()
+
+        // Step 2: Build routing graph
+        us_gh = osm.cache.GraphHopper.NorthAmerica.UnitedStates(
+            cache = us_osm.cache
+        )
+
+        // Step 3: Run LZ pipeline
+        lz = osm.Roads.ZoomBuilder.BuildZoomLayers(
+            cache = us_osm.cache,
+            graph = us_gh.graph,
+            min_population = 50000,
+            output_dir = $.output_base ++ "/us"
+        )
+
+        yield BuildUSLowZoom(result = lz.result)
+    }
+
+    // ── Canada LZ ─────────────────────────────────────────────────────
+
+    /** Builds low-zoom road layers for all of Canada. */
+    workflow BuildCanadaLowZoom(output_base: String = "/data/lz-output") => (
+        result: RegionLZResult
+    ) andThen {
+        // Step 1: Get OSM cache for full Canada
+        ca_osm = osm.cache.NorthAmerica.Canada()
+
+        // Step 2: Build routing graph
+        ca_gh = osm.cache.GraphHopper.NorthAmerica.Canada(
+            cache = ca_osm.cache
+        )
+
+        // Step 3: Run LZ pipeline
+        lz = osm.Roads.ZoomBuilder.BuildZoomLayers(
+            cache = ca_osm.cache,
+            graph = ca_gh.graph,
+            min_population = 30000,
+            output_dir = $.output_base ++ "/canada"
+        )
+
+        yield BuildCanadaLowZoom(result = lz.result)
+    }
+
+    // ── Europe LZ (12 countries in parallel) ──────────────────────────
+
+    /** Builds low-zoom road layers for 12 European countries in parallel. */
+    workflow BuildEuropeLowZoom(output_base: String = "/data/lz-output") => (
+        results: [RegionLZResult]
+    ) andThen {
+        // Step 1: Get OSM caches (all parallel)
+        de_osm = osm.cache.Europe.Germany()
+        fr_osm = osm.cache.Europe.France()
+        uk_osm = osm.cache.Europe.UnitedKingdom()
+        es_osm = osm.cache.Europe.Spain()
+        it_osm = osm.cache.Europe.Italy()
+        pl_osm = osm.cache.Europe.Poland()
+        nl_osm = osm.cache.Europe.Netherlands()
+        be_osm = osm.cache.Europe.Belgium()
+        ch_osm = osm.cache.Europe.Switzerland()
+        at_osm = osm.cache.Europe.Austria()
+        se_osm = osm.cache.Europe.Sweden()
+        no_osm = osm.cache.Europe.Norway()
+
+        // Step 2: Build routing graphs (all parallel)
+        de_gh = osm.cache.GraphHopper.Europe.Germany(cache = de_osm.cache)
+        fr_gh = osm.cache.GraphHopper.Europe.France(cache = fr_osm.cache)
+        uk_gh = osm.cache.GraphHopper.Europe.UnitedKingdom(cache = uk_osm.cache)
+        es_gh = osm.cache.GraphHopper.Europe.Spain(cache = es_osm.cache)
+        it_gh = osm.cache.GraphHopper.Europe.Italy(cache = it_osm.cache)
+        pl_gh = osm.cache.GraphHopper.Europe.Poland(cache = pl_osm.cache)
+        nl_gh = osm.cache.GraphHopper.Europe.Netherlands(cache = nl_osm.cache)
+        be_gh = osm.cache.GraphHopper.Europe.Belgium(cache = be_osm.cache)
+        ch_gh = osm.cache.GraphHopper.Europe.Switzerland(cache = ch_osm.cache)
+        at_gh = osm.cache.GraphHopper.Europe.Austria(cache = at_osm.cache)
+        se_gh = osm.cache.GraphHopper.Europe.Sweden(cache = se_osm.cache)
+        no_gh = osm.cache.GraphHopper.Europe.Norway(cache = no_osm.cache)
+
+        // Step 3: Run LZ pipelines (all parallel)
+        de_lz = osm.Roads.ZoomBuilder.BuildZoomLayers(
+            cache = de_osm.cache, graph = de_gh.graph,
+            min_population = 40000, output_dir = $.output_base ++ "/europe/germany"
+        )
+        fr_lz = osm.Roads.ZoomBuilder.BuildZoomLayers(
+            cache = fr_osm.cache, graph = fr_gh.graph,
+            min_population = 40000, output_dir = $.output_base ++ "/europe/france"
+        )
+        uk_lz = osm.Roads.ZoomBuilder.BuildZoomLayers(
+            cache = uk_osm.cache, graph = uk_gh.graph,
+            min_population = 40000, output_dir = $.output_base ++ "/europe/uk"
+        )
+        es_lz = osm.Roads.ZoomBuilder.BuildZoomLayers(
+            cache = es_osm.cache, graph = es_gh.graph,
+            min_population = 40000, output_dir = $.output_base ++ "/europe/spain"
+        )
+        it_lz = osm.Roads.ZoomBuilder.BuildZoomLayers(
+            cache = it_osm.cache, graph = it_gh.graph,
+            min_population = 40000, output_dir = $.output_base ++ "/europe/italy"
+        )
+        pl_lz = osm.Roads.ZoomBuilder.BuildZoomLayers(
+            cache = pl_osm.cache, graph = pl_gh.graph,
+            min_population = 30000, output_dir = $.output_base ++ "/europe/poland"
+        )
+        nl_lz = osm.Roads.ZoomBuilder.BuildZoomLayers(
+            cache = nl_osm.cache, graph = nl_gh.graph,
+            min_population = 30000, output_dir = $.output_base ++ "/europe/netherlands"
+        )
+        be_lz = osm.Roads.ZoomBuilder.BuildZoomLayers(
+            cache = be_osm.cache, graph = be_gh.graph,
+            min_population = 20000, output_dir = $.output_base ++ "/europe/belgium"
+        )
+        ch_lz = osm.Roads.ZoomBuilder.BuildZoomLayers(
+            cache = ch_osm.cache, graph = ch_gh.graph,
+            min_population = 20000, output_dir = $.output_base ++ "/europe/switzerland"
+        )
+        at_lz = osm.Roads.ZoomBuilder.BuildZoomLayers(
+            cache = at_osm.cache, graph = at_gh.graph,
+            min_population = 20000, output_dir = $.output_base ++ "/europe/austria"
+        )
+        se_lz = osm.Roads.ZoomBuilder.BuildZoomLayers(
+            cache = se_osm.cache, graph = se_gh.graph,
+            min_population = 20000, output_dir = $.output_base ++ "/europe/sweden"
+        )
+        no_lz = osm.Roads.ZoomBuilder.BuildZoomLayers(
+            cache = no_osm.cache, graph = no_gh.graph,
+            min_population = 20000, output_dir = $.output_base ++ "/europe/norway"
+        )
+
+        // Aggregate all results
+        yield BuildEuropeLowZoom(results = de_lz.result ++ fr_lz.result ++ uk_lz.result ++ es_lz.result ++ it_lz.result ++ pl_lz.result ++ nl_lz.result ++ be_lz.result ++ ch_lz.result ++ at_lz.result ++ se_lz.result ++ no_lz.result)
+    }
+
+    // ── Continental Orchestrator ──────────────────────────────────────
+
+    /** Orchestrates LZ road layer builds across all three continental regions in parallel. */
+    workflow BuildContinentalLZ(output_base: String = "/data/lz-output") => (
+        summary: ContinentalLZSummary
+    ) andThen {
+        // Run all three regions in parallel
+        us = BuildUSLowZoom(output_base = $.output_base)
+        canada = BuildCanadaLowZoom(output_base = $.output_base)
+        europe = BuildEuropeLowZoom(output_base = $.output_base)
+
+        yield BuildContinentalLZ(summary = us.result ++ canada.result ++ europe.results)
+    }
+}

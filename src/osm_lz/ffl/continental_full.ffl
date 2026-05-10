@@ -1,0 +1,23 @@
+// Continental Full Pipeline
+//
+// Top-level workflow combining LZ road infrastructure and GTFS transit
+// analysis across US, Canada, and Europe.
+//
+// Runs both pipelines in parallel:
+//   - continental.lz.BuildContinentalLZ  (14 regions: US + Canada + 12 EU)
+//   - continental.transit.ContinentalTransitAnalysis  (11 agencies)
+
+/** Orchestrates the complete continental analysis combining road and transit pipelines. */
+namespace continental {
+    use continental.types
+
+    /** Runs LZ road infrastructure and GTFS transit analysis in parallel across all regions. */
+    workflow FullContinentalPipeline(output_base: String = "/data/lz-output") => (
+        lz_regions: Long,
+        transit_agencies: Long
+    ) andThen {
+        lz = continental.lz.BuildContinentalLZ(output_base = $.output_base)
+        transit = continental.transit.ContinentalTransitAnalysis()
+        yield FullContinentalPipeline(lz_regions = 14, transit_agencies = 11)
+    }
+}
