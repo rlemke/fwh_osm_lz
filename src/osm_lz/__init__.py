@@ -13,11 +13,11 @@ both side by side::
     pip install -e ~/fw_handlers/fwh_osm        # the handlers
     pip install -e ~/fw_handlers/fwh_osm_lz     # this workflow catalog
 
-Discovered by the Facetwork runner via the ``facetwork.examples`` entry
+Discovered by the Facetwork runner via the ``facetwork.domains`` entry
 point declared in ``pyproject.toml``::
 
-    [project.entry-points."facetwork.examples"]
-    osm-lz = "osm_lz:example"
+    [project.entry-points."facetwork.domains"]
+    osm-lz = "osm_lz:domain"
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from facetwork.examples import ExamplePackage
+from facetwork.domains import DomainPackage
 
 
 def _register_no_handlers(_runner: Any) -> None:
@@ -38,7 +38,7 @@ def _register_no_handlers(_runner: Any) -> None:
     """
 
 
-example = ExamplePackage(
+domain = DomainPackage(
     name="osm-lz",
     ffl_dir=Path(__file__).parent / "ffl",
     register_handlers=_register_no_handlers,

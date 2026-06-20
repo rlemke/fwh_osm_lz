@@ -27,8 +27,8 @@ dev = [
 Repository = "https://github.com/rlemke/fwh_osm_lz"
 "Required Handlers" = "https://github.com/rlemke/fwh_osm"
 
-[project.entry-points."facetwork.examples"]
-osm-lz = "osm_lz:example"
+[project.entry-points."facetwork.domains"]
+osm-lz = "osm_lz:domain"
 
 [tool.setuptools.packages.find]
 where = ["src"]
