@@ -1,0 +1,191 @@
+# Composability manifest for the osm-lz package.
+#
+# Machine-readable index so an LLM can DISCOVER + REUSE these capabilities by
+# intent, the same way the platform's `fw_catalog_match` (workflow-level,
+# reuse-first) and `fw_capabilities` (facet-level capability index) tools work.
+#
+#   * `workflows` — entry-point workflows, each with a natural-language `summary`
+#     (the kind of request it answers), `tags`, and a `param_schema` of the key
+#     parameters. Use these for reuse-first catalog matching: match an NL request
+#     against the summaries/tags before authoring anything new.
+#   * `facets` — empty here ON PURPOSE. osm-lz is a **pure-FFL workflow catalog**:
+#     it declares ZERO event facets of its own. Every facet it composes
+#     (`osm.cache.*`, `osm.cache.GraphHopper.*`, `osm.Roads.ZoomBuilder.*`,
+#     `osm.Transit.GTFS.*`) is defined — and effect/cost-annotated — in the
+#     sibling `fwh_osm` package; see `osm_geocoder/catalog.yaml`'s `facets`
+#     section for that capability index. Likewise the NL-term -> OSM-tag Vocab
+#     facets are reused from fwh_osm (`osm.Vocab.*`), not redefined here.
+#
+# These workflows are continental-scale orchestrations: each fans out across many
+# countries/agencies and dispatches to fwh_osm's `external`/`expensive`,
+# long-running extract/build/render event facets, so every entry below is
+# effectively external + expensive at runtime (the cost of its constituent osm
+# steps), even though the FFL composition logic itself is pure. Accurate
+# qualified names + signatures are sourced from the .ffl; see
+# `osm_lz.catalog.load_manifest()`.
+
+version: 1
+package: osm-lz
+
+workflows:
+  # --- Continental orchestrators (top-level entry points) ---------------------
+  - qualified_name: continental.FullContinentalPipeline
+    summary: >-
+      Run the complete continental analysis in one shot: low-zoom road
+      infrastructure (LZ, zoom 2-7) across the US, Canada and 12 European
+      countries AND GTFS transit analysis across 11 major US/Canada/Europe
+      agencies, in parallel. The preferred entry point for "build everything
+      continental — roads and transit".
+    tags: [continental, orchestrator, low-zoom, roads, transit, gtfs, fanout, parallel]
+    entry_point: true
+    param_schema:
+      output_base: String
+
+  - qualified_name: continental.lz.BuildContinentalLZ
+    summary: >-
+      Build low-zoom (zoom 2-7) road tile layers across all three continental
+      regions in parallel — the entire United States, all of Canada, and 12
+      European countries — via OSM cache -> GraphHopper graph -> BuildZoomLayers
+      per region. Use for "continental low-zoom road map of North America +
+      Europe".
+    tags: [continental, low-zoom, roads, graphhopper, zoom-layers, fanout, parallel]
+    entry_point: true
+    param_schema:
+      output_base: String
+
+  - qualified_name: continental.transit.ContinentalTransitAnalysis
+    summary: >-
+      Download and analyze the GTFS static feeds of 11 major transit agencies
+      across the US, Canada and Europe and produce a continental transit summary.
+      The entry point for "analyze transit across North America and Europe".
+    tags: [continental, transit, gtfs, agencies, analysis, fanout, parallel]
+    entry_point: true
+    param_schema: {}
+
+  # --- Regional LZ builders --------------------------------------------------
+  - qualified_name: continental.lz.BuildUSLowZoom
+    summary: >-
+      Build low-zoom road layers for the entire United States (full-country PBF ->
+      GraphHopper graph -> BuildZoomLayers, min population 50k).
+    tags: [low-zoom, roads, united-states, graphhopper, zoom-layers]
+    entry_point: true
+    param_schema:
+      output_base: String
+
+  - qualified_name: continental.lz.BuildCanadaLowZoom
+    summary: >-
+      Build low-zoom road layers for all of Canada (full-country PBF ->
+      GraphHopper graph -> BuildZoomLayers, min population 30k).
+    tags: [low-zoom, roads, canada, graphhopper, zoom-layers]
+    entry_point: true
+    param_schema:
+      output_base: String
+
+  - qualified_name: continental.lz.BuildEuropeLowZoom
+    summary: >-
+      Build low-zoom road layers for 12 European countries (Germany, France, UK,
+      Spain, Italy, Poland, Netherlands, Belgium, Switzerland, Austria, Sweden,
+      Norway) in parallel, each PBF -> GraphHopper graph -> BuildZoomLayers.
+    tags: [low-zoom, roads, europe, graphhopper, zoom-layers, fanout, parallel]
+    entry_point: true
+    param_schema:
+      output_base: String
+
+  # --- Regional transit aggregators ------------------------------------------
+  - qualified_name: continental.transit.AnalyzeUSTransit
+    summary: >-
+      Download and analyze the GTFS feeds of the four major US agencies (Amtrak,
+      MBTA, CTA, MTA) and aggregate their per-agency statistics.
+    tags: [transit, gtfs, united-states, agencies, analysis]
+    entry_point: true
+    param_schema: {}
+
+  - qualified_name: continental.transit.AnalyzeCanadaTransit
+    summary: >-
+      Download and analyze the GTFS feeds of the three major Canadian agencies
+      (TransLink, TTC, OC Transpo) and aggregate their per-agency statistics.
+    tags: [transit, gtfs, canada, agencies, analysis]
+    entry_point: true
+    param_schema: {}
+
+  - qualified_name: continental.transit.AnalyzeEuropeTransit
+    summary: >-
+      Download and analyze the GTFS feeds of the four major European agencies
+      (Deutsche Bahn, SNCF, Renfe, Trenitalia) and aggregate their per-agency
+      statistics.
+    tags: [transit, gtfs, europe, agencies, analysis]
+    entry_point: true
+    param_schema: {}
+
+  # --- Per-agency transit workflows ------------------------------------------
+  - qualified_name: continental.transit.AnalyzeAmtrak
+    summary: >-
+      Download and analyze the Amtrak national rail GTFS feed (stats, stops,
+      routes) for a single agency.
+    tags: [transit, gtfs, amtrak, rail, united-states, single-agency]
+    entry_point: true
+    param_schema: {}
+
+  - qualified_name: continental.transit.AnalyzeMBTA
+    summary: Download and analyze the MBTA (Boston) GTFS feed for a single agency.
+    tags: [transit, gtfs, mbta, boston, united-states, single-agency]
+    entry_point: true
+    param_schema: {}
+
+  - qualified_name: continental.transit.AnalyzeCTA
+    summary: Download and analyze the CTA (Chicago) GTFS feed for a single agency.
+    tags: [transit, gtfs, cta, chicago, united-states, single-agency]
+    entry_point: true
+    param_schema: {}
+
+  - qualified_name: continental.transit.AnalyzeMTA
+    summary: Download and analyze the MTA (New York City Subway) GTFS feed for a single agency.
+    tags: [transit, gtfs, mta, new-york, united-states, single-agency]
+    entry_point: true
+    param_schema: {}
+
+  - qualified_name: continental.transit.AnalyzeTransLink
+    summary: Download and analyze the TransLink (Vancouver) GTFS feed for a single agency.
+    tags: [transit, gtfs, translink, vancouver, canada, single-agency]
+    entry_point: true
+    param_schema: {}
+
+  - qualified_name: continental.transit.AnalyzeTTC
+    summary: Download and analyze the TTC (Toronto) GTFS feed for a single agency.
+    tags: [transit, gtfs, ttc, toronto, canada, single-agency]
+    entry_point: true
+    param_schema: {}
+
+  - qualified_name: continental.transit.AnalyzeOCTranspo
+    summary: Download and analyze the OC Transpo (Ottawa) GTFS feed for a single agency.
+    tags: [transit, gtfs, oc-transpo, ottawa, canada, single-agency]
+    entry_point: true
+    param_schema: {}
+
+  - qualified_name: continental.transit.AnalyzeDeutscheBahn
+    summary: Download and analyze the Deutsche Bahn (Germany) GTFS feed for a single agency.
+    tags: [transit, gtfs, deutsche-bahn, germany, europe, single-agency]
+    entry_point: true
+    param_schema: {}
+
+  - qualified_name: continental.transit.AnalyzeSNCF
+    summary: Download and analyze the SNCF TER (France regional rail) GTFS feed for a single agency.
+    tags: [transit, gtfs, sncf, france, rail, europe, single-agency]
+    entry_point: true
+    param_schema: {}
+
+  - qualified_name: continental.transit.AnalyzeRenfe
+    summary: Download and analyze the Renfe (Spain) GTFS feed for a single agency.
+    tags: [transit, gtfs, renfe, spain, europe, single-agency]
+    entry_point: true
+    param_schema: {}
+
+  - qualified_name: continental.transit.AnalyzeTrenitalia
+    summary: Download and analyze the Trenitalia (Italy) GTFS feed for a single agency.
+    tags: [transit, gtfs, trenitalia, italy, europe, single-agency]
+    entry_point: true
+    param_schema: {}
+
+# osm-lz declares no event facets of its own (pure-FFL workflow catalog). The
+# facet capability index it composes lives in fwh_osm (osm_geocoder/catalog.yaml).
+facets: []

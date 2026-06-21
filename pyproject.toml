@@ -14,6 +14,7 @@ keywords = ["facetwork", "ffl", "openstreetmap", "osm", "low-zoom", "graphhopper
 
 dependencies = [
     "facetwork>=0.31.0",
+    "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -37,6 +38,7 @@ where = ["src"]
 osm_lz = [
     "ffl/*.ffl",
     "ffl/*.json",
+    "catalog.yaml",
 ]
 
 [tool.ruff]
