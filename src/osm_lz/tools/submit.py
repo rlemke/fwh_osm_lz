@@ -3,8 +3,8 @@
 
 Resolves the ``--primary`` and ``--library`` FFL files for the workflow
 automatically from the catalog so callers don't have to list them. The
-runner this submits to is whatever ``AFL_MONGODB_URL`` /
-``AFL_MONGODB_DATABASE`` point at — set them in your shell or in
+runner this submits to is whatever ``FW_MONGODB_URL`` /
+``FW_MONGODB_DATABASE`` point at — set them in your shell or in
 Facetwork's ``.env``.
 
 This is a thin wrapper around ``facetwork-submit`` (which lives in the

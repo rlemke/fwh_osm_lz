@@ -19,7 +19,7 @@ CLIs here wrap **workflow submission**, not individual operations.
 
 - `list-workflows.sh --qualified-only` prints one name per line for piping.
 - `submit.sh --workflow <qualified-name> [--inputs <json>] [--task-list <name>]`.
-- Both honour `AFL_MONGODB_URL` / `AFL_MONGODB_DATABASE` from the
+- Both honour `FW_MONGODB_URL` / `FW_MONGODB_DATABASE` from the
   environment (set them in your shell or in Facetwork's `.env`).
 - `submit.sh` is a thin wrapper around `facetwork-submit` — it adds the
   primary/library FFL paths from `_lib/workflows.py` so callers don't
