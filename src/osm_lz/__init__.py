@@ -33,7 +33,7 @@ def _register_no_handlers(_runner: Any) -> None:
 
     osm-lz contributes only FFL workflows — the handlers it composes
     are registered by the fwh_osm package. Discovery still calls this
-    so the example surfaces in `--example osm-lz`; it just doesn't
+    so the example surfaces in `--domain osm-lz`; it just doesn't
     add any rows to ``handler_registrations``.
     """
 

@@ -11,8 +11,8 @@ GTFS transit analysis. The handlers it depends on live in fwh_osm.
 
 ```
 fwh_osm_lz/
-├── pyproject.toml                 # declares the facetwork.examples entry point
-├── src/osm_lz/__init__.py         # exports `example: ExamplePackage` (no-op register_handlers)
+├── pyproject.toml                 # declares the facetwork.domains entry point
+├── src/osm_lz/__init__.py         # exports `domain: DomainPackage` (no-op register_handlers)
 ├── src/osm_lz/ffl/                # 4 FFL files (no Python handlers)
 ├── src/osm_lz/tools/              # workflow-submission CLIs (the example's surface)
 └── agent-spec/                    # cross-cutting design specs
@@ -42,8 +42,8 @@ pip install -e ~/fw_handlers/fwh_osm
 pip install -e ~/fw_handlers/fwh_osm_lz
 
 # From a Facetwork checkout:
-scripts/seed-examples --include osm-lz
-scripts/start-runner --example osm-geocoder --example osm-lz -- --log-format text
+fw ffl seed --include osm-lz
+fw runner start --domain osm-geocoder --domain osm-lz -- --log-format text
 
 # CLIs
 src/osm_lz/tools/list-workflows.sh
@@ -73,7 +73,7 @@ workflows under `continental.*` if their region story is different.
 2. Add a row to `tools/_lib/workflows.py` so `tools/list-workflows.sh`
    surfaces it and `tools/submit.sh` can find it without `--library`
    flags.
-3. Re-run `scripts/seed-examples --include osm-lz` so the new workflow
+3. Re-run `fw ffl seed --include osm-lz` so the new workflow
    shows up in the dashboard.
 
 ## Code review checklist

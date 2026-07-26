@@ -37,7 +37,7 @@ git clone https://github.com/rlemke/fwh_osm_lz.git ~/fw_handlers/fwh_osm_lz
 pip install -e ~/fw_handlers/fwh_osm_lz
 ```
 
-Both packages register under the `facetwork.examples` entry-point group,
+Both packages register under the `facetwork.domains` entry-point group,
 making them discoverable by any Facetwork installation in the same
 environment.
 
@@ -48,13 +48,13 @@ The runner needs the **osm-geocoder** handlers (from fwh_osm) plus the
 
 ```bash
 # Seed the workflow catalog into MongoDB
-scripts/seed-examples --include osm-lz
+fw ffl seed --include osm-lz
 
 # Start a runner with osm-geocoder's handlers; it picks up osm-lz workflows automatically
-scripts/start-runner --example osm-geocoder --example osm-lz -- --log-format text
+fw runner start --domain osm-geocoder --domain osm-lz -- --log-format text
 ```
 
-`osm-lz` itself shows `SKIP (no handlers/)` during start-runner — that's
+`osm-lz` itself shows `SKIP (no handlers/)` during `fw runner start` — that's
 correct, the example contributes only FFL.
 
 ## Run a workflow
@@ -127,13 +127,13 @@ handler family they compose against.
 
 ```
 fwh_osm_lz/
-├── pyproject.toml                 # facetwork.examples entry point (osm-lz = osm_lz:example)
+├── pyproject.toml                 # facetwork.domains entry point (osm-lz = osm_lz:example)
 ├── README.md
 ├── CLAUDE.md
 ├── USER_GUIDE.md
 ├── agent-spec/
 └── src/osm_lz/
-    ├── __init__.py                # exports `example: ExamplePackage` (no-op register_handlers)
+    ├── __init__.py                # exports `domain: DomainPackage` (no-op register_handlers)
     ├── ffl/                       # 4 FFL files: types, lz workflows, gtfs workflows, full pipeline
     └── tools/                     # CLI submission helpers
         ├── _lib/workflows.py      # workflow catalog metadata
