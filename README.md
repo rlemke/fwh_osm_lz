@@ -11,6 +11,20 @@ handlers. The handlers it composes
 `osm.Roads.ZoomBuilder.*`, `osm.Transit.GTFS.*`) live in the sibling
 [fwh_osm](https://github.com/rlemke/fwh_osm) package.
 
+## Feature specifications
+
+Every osm-lz feature has a spec in [**`docs/`**](docs/README.md) — how it works,
+whether/how it **fans out**, the **schemas/fields** it declares, its **workflows**,
+and (because this is a pure-FFL catalog) exactly which upstream **`fwh_osm` facets it
+composes**. This package declares **no facets and registers no handlers of its own**;
+start with the flagship [**Continental LZ**](docs/continental-lz.md) and the full
+index in [`docs/README.md`](docs/README.md).
+
+| Area | Specs |
+|------|-------|
+| **Pipelines** | [continental-lz](docs/continental-lz.md) (flagship) · [continental-transit](docs/continental-transit.md) · [full-pipeline](docs/full-pipeline.md) |
+| **Types & packaging** | [shared-types](docs/shared-types.md) · [catalog-and-tooling](docs/catalog-and-tooling.md) |
+
 ## Install
 
 ```bash
