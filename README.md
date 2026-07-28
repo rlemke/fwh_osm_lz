@@ -11,6 +11,48 @@ handlers. The handlers it composes
 `osm.Roads.ZoomBuilder.*`, `osm.Transit.GTFS.*`) live in the sibling
 [fwh_osm](https://github.com/rlemke/fwh_osm) package.
 
+## FFL at a glance
+
+This domain is **pure [FFL](https://github.com/rlemke/facetwork/blob/main/docs/reference/language/grammar.md)**
+— no handlers of its own, only workflows composed over `fwh_osm`'s facets. A step
+is `name = Facet(args)`, and each step that references the previous one is ordered
+behind it:
+
+```ffl
+namespace my.lz {
+
+    use osm.cache.NorthAmerica
+    use osm.cache.GraphHopper.NorthAmerica
+    use osm.Roads.ZoomBuilder
+
+    /** US low-zoom road layers from the cached PBF. */
+    workflow MyUSLowZoom(output_base: String = "/data/lz-output", min_population: Long = 50000) => (edges: Long, out_dir: String) andThen {
+
+        us_osm = osm.cache.NorthAmerica.UnitedStates()
+
+        us_gh = osm.cache.GraphHopper.NorthAmerica.UnitedStates(cache = us_osm.cache)
+
+        lz = osm.Roads.ZoomBuilder.BuildZoomLayers(
+            cache = us_osm.cache,
+            graph = us_gh.graph,
+            min_population = $.min_population,
+            output_dir = $.output_base ++ "/us")
+
+        yield MyUSLowZoom(edges = lz.result.selected_edges, out_dir = lz.result.output_dir)
+    }
+}
+```
+
+```bash
+fw ffl run --primary my.ffl --library <this domain's + fwh_osm's ffl> \
+  --workflow my.lz.MyUSLowZoom --task-list osm
+```
+
+📖 **[docs/ffl-examples.md](docs/ffl-examples.md)** — the full example gallery:
+two regions in parallel, wrapping the shipped pipelines, transit rollups, `when`
+checks on GTFS shapes, and call-time `Timeout`/`Retry`/`catch` for the long
+continental builds. Every snippet there is compile-checked against both domains.
+
 ## Feature specifications
 
 Every osm-lz feature has a spec in [**`docs/`**](docs/README.md) — how it works,

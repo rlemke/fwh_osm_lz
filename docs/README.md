@@ -32,6 +32,7 @@ per country).
 |------|----------------|
 | [shared-types.md](shared-types.md) | The `continental.types` schemas (`RegionLZResult`, `TransitAgencyResult`, `ContinentalLZSummary`, `ContinentalTransitSummary`) shared by every workflow; the type bridge to upstream result types. |
 | [catalog-and-tooling.md](catalog-and-tooling.md) | How the package registers (**no handlers**), the `catalog.yaml` composability manifest (`facets: []` on purpose), `uses`-resolution against fwh_osm, and the `submit` / `list-workflows` CLIs. |
+| [ffl-examples.md](ffl-examples.md) | **Usage patterns.** A gallery of complete, compile-checked FFL examples — the cache→graph→zoom-layers pattern, parallel regions, wrapping the shipped pipelines, transit rollups, `when`, mixins + `catch`. |
 
 ---
 
