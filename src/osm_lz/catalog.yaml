@@ -29,6 +29,41 @@ package: osm-lz
 
 workflows:
   # --- Continental orchestrators (top-level entry points) ---------------------
+  # --- Per-state low-zoom (one region per run, by necessity) ------------------
+  - qualified_name: continental.lz.states.BuildStateLowZoomMap
+    summary: >-
+      Build ONE US state's graded low-zoom road network and publish it as a
+      streamed vector-tile map: interstates first at continental scale, then
+      trunk, primary, secondary and down as you zoom in. The entry point for
+      "make a low-zoom road map of Oregon". One region per run is not a
+      simplification but a constraint: graphhopper-web serves exactly one
+      region, so the graphhopper role must already be pointed at this one --
+      the builder refuses to start otherwise rather than scoring zero
+      betweenness and reporting success.
+    tags: [low-zoom, roads, us-states, vector-tiles, pmtiles, map, single-region]
+    entry_point: true
+    param_schema:
+      region: String
+      slug: String
+      label: String
+      output_base: String
+      min_population: Long
+      profile: String
+      basemap: String
+
+  - qualified_name: continental.lz.states.BuildStateGraphs
+    summary: >-
+      Build (or reuse) the GraphHopper routing graphs for a list of US state
+      extracts, one at a time. Run this before pointing the graphhopper role at
+      a state: the server refuses to start without a built graph in the object
+      store, so the graph must exist first.
+    tags: [low-zoom, roads, us-states, graphhopper, routing-graph, prerequisite, serial]
+    entry_point: true
+    param_schema:
+      states: "[String]"
+      profile: String
+      width: Int
+
   - qualified_name: continental.FullContinentalPipeline
     summary: >-
       Run the complete continental analysis in one shot: low-zoom road

@@ -1,0 +1,90 @@
+// Low-zoom road maps for US states, one region per run.
+//
+// Why per-region and not one fan-out: the low-zoom builder scores roads by
+// ROUTING sampled city pairs, and graphhopper-web serves exactly ONE region at
+// a time. A second state's coordinates come back "out of bounds" from a server
+// holding the first, and `_route_pair` returns that like any ordinary miss — so
+// a fan-out would complete, score zero betweenness everywhere, and publish
+// hollow maps that look identical to correct ones. Measured 2026-09-24:
+// Oregon and Idaho pairs both HTTP 400 against the Washington server.
+//
+// So the driver runs BuildStateGraphs ONCE (graph building needs no server),
+// then repoints the graphhopper role at each state in turn and runs
+// BuildStateLowZoomMap for it. The router probe in the builder now refuses to
+// start if the server is holding the wrong region, so a mis-sequenced run
+// fails instead of lying.
+namespace continental.lz.states {
+    use osm.types
+    uses osm.ops
+    uses osm.ops.GraphHopper
+    uses osm.Roads.ZoomBuilder
+    uses osm.Tiles
+    uses osm.viz
+
+    /** Builds (or reuses) the routing graphs for every named state.
+        Serialised: an import peaks well above the extract's own size, and these
+        share one Docker VM with the whole runner fleet. */
+    workflow BuildStateGraphs(states: [String], profile: String = "car", width: Int = 1) => (
+        built: [String]
+    ) andThen foreach st in $.states limit $.width {
+        extract = osm.ops.CacheRegion(region = $.st)
+
+        gh = osm.ops.GraphHopper.BuildGraph(cache = extract.cache, profile = $.profile)
+
+        yield BuildStateGraphs(built += gh.graph.graphDir)
+    }
+
+    /** One state's graded low-zoom road network, as streamed vector tiles.
+        `region` is the extract path (north-america/us/oregon), `slug` the path-safe
+        name for outputs, `label` what the page is titled. slug and label are kept
+        apart deliberately: "New Hampshire" in a directory name is a path with a
+        space in it. The graphhopper role MUST already be serving this region. */
+    workflow BuildStateLowZoomMap(
+        region: String,
+        slug: String,
+        label: String,
+        output_base: String = "/scratch/output/lz-states",
+        min_population: Long = 50000,
+        profile: String = "car",
+        basemap: String = "dark"
+    ) => (edges: Long, map_path: String, layer_dir: String) andThen {
+        extract = osm.ops.CacheRegion(region = $.region)
+
+        gh = osm.ops.GraphHopper.BuildGraph(cache = extract.cache, profile = $.profile)
+
+        lz = osm.Roads.ZoomBuilder.BuildZoomLayers(
+            cache = extract.cache,
+            graph = gh.graph,
+            min_population = $.min_population,
+            output_dir = $.output_base ++ "/" ++ $.slug
+        )
+
+        // One tileset per zoom band. The per-layer min_zoom is what makes the
+        // reveal follow the map: the z2 tileset exists from map zoom 2, the z7
+        // one only from 7, so at continental scale the lower classes are simply
+        // absent rather than hidden behind a checkbox.
+        t2 = osm.Tiles.BuildVectorTiles(geojson_path = lz.result.output_dir ++ "/roads_z2.geojson", layer_name = "roads_z2", min_zoom = 2, max_zoom = 14)
+        t3 = osm.Tiles.BuildVectorTiles(geojson_path = lz.result.output_dir ++ "/roads_z3.geojson", layer_name = "roads_z3", min_zoom = 3, max_zoom = 14)
+        t4 = osm.Tiles.BuildVectorTiles(geojson_path = lz.result.output_dir ++ "/roads_z4.geojson", layer_name = "roads_z4", min_zoom = 4, max_zoom = 14)
+        t5 = osm.Tiles.BuildVectorTiles(geojson_path = lz.result.output_dir ++ "/roads_z5.geojson", layer_name = "roads_z5", min_zoom = 5, max_zoom = 14)
+        t6 = osm.Tiles.BuildVectorTiles(geojson_path = lz.result.output_dir ++ "/roads_z6.geojson", layer_name = "roads_z6", min_zoom = 6, max_zoom = 14)
+        t7 = osm.Tiles.BuildVectorTiles(geojson_path = lz.result.output_dir ++ "/roads_z7.geojson", layer_name = "roads_z7", min_zoom = 7, max_zoom = 14)
+
+        // No centre is passed: fit_to_data frames each archive's own bounds, so
+        // one workflow serves every state without a centroid table to get wrong.
+        map = osm.viz.RenderTiledMap(
+            tiles = [t2.result.output_path, t3.result.output_path, t4.result.output_path,
+                     t5.result.output_path, t6.result.output_path, t7.result.output_path],
+            layer_names = ["roads_z2", "roads_z3", "roads_z4", "roads_z5", "roads_z6", "roads_z7"],
+            colors = ["#7f0000", "#d7301f", "#fc8d59", "#fdcc8a", "#a6bddb", "#74a9cf"],
+            title = $.label ++ " low-zoom road network - graded reveal",
+            basemap = $.basemap
+        )
+
+        yield BuildStateLowZoomMap(
+            edges = lz.result.selected_edges,
+            map_path = map.result.output_path,
+            layer_dir = lz.result.output_dir
+        )
+    }
+}
