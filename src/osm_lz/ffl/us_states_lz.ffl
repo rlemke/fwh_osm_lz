@@ -63,19 +63,28 @@ namespace continental.lz.states {
         // reveal follow the map: the z2 tileset exists from map zoom 2, the z7
         // one only from 7, so at continental scale the lower classes are simply
         // absent rather than hidden behind a checkbox.
-        t2 = osm.Tiles.BuildVectorTiles(geojson_path = lz.result.output_dir ++ "/roads_z2.geojson", layer_name = "roads_z2", min_zoom = 2, max_zoom = 14)
-        t3 = osm.Tiles.BuildVectorTiles(geojson_path = lz.result.output_dir ++ "/roads_z3.geojson", layer_name = "roads_z3", min_zoom = 3, max_zoom = 14)
-        t4 = osm.Tiles.BuildVectorTiles(geojson_path = lz.result.output_dir ++ "/roads_z4.geojson", layer_name = "roads_z4", min_zoom = 4, max_zoom = 14)
-        t5 = osm.Tiles.BuildVectorTiles(geojson_path = lz.result.output_dir ++ "/roads_z5.geojson", layer_name = "roads_z5", min_zoom = 5, max_zoom = 14)
-        t6 = osm.Tiles.BuildVectorTiles(geojson_path = lz.result.output_dir ++ "/roads_z6.geojson", layer_name = "roads_z6", min_zoom = 6, max_zoom = 14)
-        t7 = osm.Tiles.BuildVectorTiles(geojson_path = lz.result.output_dir ++ "/roads_z7.geojson", layer_name = "roads_z7", min_zoom = 7, max_zoom = 14)
+        //
+        // ⚠️ The slug is in every layer_name because BuildVectorTiles names its
+        // output from the GeoJSON stem + layer_name — deliberately, so the name
+        // encodes the discriminating PARAMETERS rather than an execution id. Both
+        // were state-independent here ("roads_z2.geojson" + "roads_z2"), so all 45
+        // states would have written the same `roads_z2_tiles_roads_z2-z2_14.pmtiles`
+        // and the same viewer directory, each silently overwriting the last. The
+        // slug is what discriminates them, so it belongs in the layer name.
+        t2 = osm.Tiles.BuildVectorTiles(geojson_path = lz.result.output_dir ++ "/roads_z2.geojson", layer_name = $.slug ++ "_roads_z2", min_zoom = 2, max_zoom = 14)
+        t3 = osm.Tiles.BuildVectorTiles(geojson_path = lz.result.output_dir ++ "/roads_z3.geojson", layer_name = $.slug ++ "_roads_z3", min_zoom = 3, max_zoom = 14)
+        t4 = osm.Tiles.BuildVectorTiles(geojson_path = lz.result.output_dir ++ "/roads_z4.geojson", layer_name = $.slug ++ "_roads_z4", min_zoom = 4, max_zoom = 14)
+        t5 = osm.Tiles.BuildVectorTiles(geojson_path = lz.result.output_dir ++ "/roads_z5.geojson", layer_name = $.slug ++ "_roads_z5", min_zoom = 5, max_zoom = 14)
+        t6 = osm.Tiles.BuildVectorTiles(geojson_path = lz.result.output_dir ++ "/roads_z6.geojson", layer_name = $.slug ++ "_roads_z6", min_zoom = 6, max_zoom = 14)
+        t7 = osm.Tiles.BuildVectorTiles(geojson_path = lz.result.output_dir ++ "/roads_z7.geojson", layer_name = $.slug ++ "_roads_z7", min_zoom = 7, max_zoom = 14)
 
         // No centre is passed: fit_to_data frames each archive's own bounds, so
         // one workflow serves every state without a centroid table to get wrong.
         map = osm.viz.RenderTiledMap(
             tiles = [t2.result.output_path, t3.result.output_path, t4.result.output_path,
                      t5.result.output_path, t6.result.output_path, t7.result.output_path],
-            layer_names = ["roads_z2", "roads_z3", "roads_z4", "roads_z5", "roads_z6", "roads_z7"],
+            layer_names = [$.slug ++ "_roads_z2", $.slug ++ "_roads_z3", $.slug ++ "_roads_z4",
+                           $.slug ++ "_roads_z5", $.slug ++ "_roads_z6", $.slug ++ "_roads_z7"],
             colors = ["#7f0000", "#d7301f", "#fc8d59", "#fdcc8a", "#a6bddb", "#74a9cf"],
             title = $.label ++ " low-zoom road network - graded reveal",
             basemap = $.basemap
