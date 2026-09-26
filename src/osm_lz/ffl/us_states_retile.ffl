@@ -1,0 +1,44 @@
+// Re-tile a state's low-zoom layers that already exist on disk.
+//
+// The expensive part of a low-zoom build is ROUTING — hours for a large state.
+// When only the SELECTION changes (the orphan-fragment prune, fwh_osm 7c66b9f),
+// re-running the whole builder would redo that routing for nothing. The layer
+// GeoJSONs and the full logical graph are both saved beside each other, so the
+// new selection can be applied to them directly and only the tiles and viewer
+// need rebuilding: ~3 minutes a state against ~30, and byte-for-byte the same
+// facets produce the output.
+//
+// ⚠️ This takes the layers AS THEY ARE on disk. It is a re-tile, not a re-build:
+// whatever wrote those files decides what the map shows.
+namespace continental.lz.states {
+    use osm.types
+    uses osm.Tiles
+    uses osm.viz
+
+    /** Rebuild one state's vector tiles + viewer from its existing layer files. */
+    workflow RetileStateMap(
+        layer_dir: String,
+        slug: String,
+        label: String,
+        basemap: String = "dark"
+    ) => (map_path: String) andThen {
+        t2 = osm.Tiles.BuildVectorTiles(geojson_path = $.layer_dir ++ "/roads_z2.geojson", layer_name = $.slug ++ "_roads_z2", min_zoom = 2, max_zoom = 14)
+        t3 = osm.Tiles.BuildVectorTiles(geojson_path = $.layer_dir ++ "/roads_z3.geojson", layer_name = $.slug ++ "_roads_z3", min_zoom = 3, max_zoom = 14)
+        t4 = osm.Tiles.BuildVectorTiles(geojson_path = $.layer_dir ++ "/roads_z4.geojson", layer_name = $.slug ++ "_roads_z4", min_zoom = 4, max_zoom = 14)
+        t5 = osm.Tiles.BuildVectorTiles(geojson_path = $.layer_dir ++ "/roads_z5.geojson", layer_name = $.slug ++ "_roads_z5", min_zoom = 5, max_zoom = 14)
+        t6 = osm.Tiles.BuildVectorTiles(geojson_path = $.layer_dir ++ "/roads_z6.geojson", layer_name = $.slug ++ "_roads_z6", min_zoom = 6, max_zoom = 14)
+        t7 = osm.Tiles.BuildVectorTiles(geojson_path = $.layer_dir ++ "/roads_z7.geojson", layer_name = $.slug ++ "_roads_z7", min_zoom = 7, max_zoom = 14)
+
+        map = osm.viz.RenderTiledMap(
+            tiles = [t2.result.output_path, t3.result.output_path, t4.result.output_path,
+                     t5.result.output_path, t6.result.output_path, t7.result.output_path],
+            layer_names = [$.slug ++ "_roads_z2", $.slug ++ "_roads_z3", $.slug ++ "_roads_z4",
+                           $.slug ++ "_roads_z5", $.slug ++ "_roads_z6", $.slug ++ "_roads_z7"],
+            colors = ["#7f0000", "#d7301f", "#fc8d59", "#fdcc8a", "#a6bddb", "#74a9cf"],
+            title = $.label ++ " low-zoom road network - graded reveal",
+            basemap = $.basemap
+        )
+
+        yield RetileStateMap(map_path = map.result.output_path)
+    }
+}
