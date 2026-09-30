@@ -3,7 +3,7 @@
 This repository is a **standalone Facetwork example package**, paired
 with [fwh_osm](https://github.com/rlemke/fwh_osm). The Facetwork
 platform (workflow compiler + runtime) lives at
-`/Users/ralph_lemke/facetwork`; this repo only ships FFL workflow
+[github.com/rlemke/facetwork](https://github.com/rlemke/facetwork); this repo only ships FFL workflow
 definitions for the OSM Low-Zoom (LZ) road infrastructure pipeline and
 GTFS transit analysis. The handlers it depends on live in fwh_osm.
 
