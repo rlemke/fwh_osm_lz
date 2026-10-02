@@ -58,6 +58,10 @@ EXTRACTS_BUCKET = os.environ.get("FW_OSM_EXTRACT_BUCKET", "osm-extracts")
 ROUTER_GROUP = os.environ.get("FW_LZ_ROUTER_GROUP", "heavy")
 ROUTER_PORT = int(os.environ.get("FW_GRAPHHOPPER_PORT", "8989"))
 PROFILE = "car"
+#: Where each map's zoom layers are written. Must be SHARED storage: the layers
+#: are built on one host and tiled by steps any host may claim (2026-10-02: a
+#: local default failed every tile step that landed elsewhere).
+OUTPUT_BASE = os.environ.get("FW_LZ_OUTPUT_BASE") or f"s3://{MAPS_BUCKET}/osm-output/lz-world"
 
 ROUTER_READY_TIMEOUT = 45 * 60
 CUT_TIMEOUT = 8 * 3600
@@ -535,7 +539,12 @@ def run_continent(s3c, cont, order, max_mb, led) -> None:
             rid = submit(
                 LZ_FFL,
                 "continental.lz.states.BuildStateLowZoomMap",
-                {"region": n.key, "slug": wp.slug(n.key), "label": wp.label(n.key)},
+                {
+                    "region": n.key,
+                    "slug": wp.slug(n.key),
+                    "label": wp.label(n.key),
+                    "output_base": OUTPUT_BASE,
+                },
             )
             rec.update(map_state="running", map_runner=rid)
             ledger_write(led)
