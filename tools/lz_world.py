@@ -357,6 +357,12 @@ def current_router_region() -> str:
 #: the full timeout. Silence is not staleness: a host that ANSWERS with the old
 #: region is still waited for, because that is the failure this guards against.
 SILENT_GRACE_S = 5 * 60
+#: A host that was silent on the previous switch gets only this long on the
+#: next one: at ~600 maps, a full grace per switch would add ~50 h of waiting
+#: for a host that has never once answered. It is re-probed every switch, so a
+#: host that starts answering is waited for again.
+KNOWN_SILENT_GRACE_S = 45
+_known_silent: set[str] = set()
 
 
 def point_router_at(key: str) -> None:
@@ -396,10 +402,14 @@ def point_router_at(key: str) -> None:
             if info and info.get("bbox") and info["bbox"] != before[name]:
                 ready.add(name)
         if len(ready) == len(hosts):
+            _known_silent.clear()
             log(f"    router serving {key} on {len(ready)} host(s)")
             return
         silent = [n for n, _ in hosts if n not in ready and n not in answered]
-        if ready and time.time() - t0 > SILENT_GRACE_S and len(ready) + len(silent) == len(hosts):
+        grace = KNOWN_SILENT_GRACE_S if silent and set(silent) <= _known_silent else SILENT_GRACE_S
+        if ready and time.time() - t0 > grace and len(ready) + len(silent) == len(hosts):
+            _known_silent.clear()
+            _known_silent.update(silent)
             log(
                 f"    router serving {key} on {len(ready)} host(s); not verifiable from "
                 f"here (no answer at all): {', '.join(silent)}"
