@@ -333,6 +333,28 @@ def _info(ip: str) -> dict | None:
         return None
 
 
+def current_router_region() -> str:
+    r = subprocess.run(
+        [str(FW_ROOT / "fw"), "fleet", "get", "--mongo", mongo_url()],
+        capture_output=True,
+        text=True,
+        cwd=FW_ROOT,
+    )
+    for line in r.stdout.splitlines():
+        if "role graphhopper:" in line and "region=" in line:
+            return line.split("region=", 1)[1].split()[0]
+    return ""
+
+
+#: How long a router host may stay entirely SILENT before it is reported as
+#: unverifiable from here rather than waited for. Measured 2026-10-02: one host
+#: (a laptop on Docker Desktop) served the region correctly to its own runners
+#: but returned "empty reply" to LAN probes, so every switch would have sat out
+#: the full timeout. Silence is not staleness: a host that ANSWERS with the old
+#: region is still waited for, because that is the failure this guards against.
+SILENT_GRACE_S = 5 * 60
+
+
 def point_router_at(key: str) -> None:
     """Repoint the graphhopper role and wait until every router host serves ``key``.
 
@@ -342,6 +364,11 @@ def point_router_at(key: str) -> None:
     prevent (it 400s every pair, and the map comes out hollow).
     """
     hosts = router_hosts()
+    if current_router_region() == key:
+        up = [n for n, ip in hosts if (_info(ip) or {}).get("bbox")]
+        if up:
+            log(f"    router already serving {key} ({len(up)} host(s) answering)")
+            return
     before = {name: (_info(ip) or {}).get("bbox") for name, ip in hosts}
     r = subprocess.run(
         [str(FW_ROOT / "fw"), "fleet", "set", "--mongo", mongo_url(), "--graphhopper-region", key],
@@ -351,17 +378,28 @@ def point_router_at(key: str) -> None:
     )
     if r.returncode != 0:
         raise RuntimeError(f"fleet set failed: {r.stdout[-600:]} {r.stderr[-600:]}")
-    deadline = time.time() + ROUTER_READY_TIMEOUT
+    t0 = time.time()
+    deadline = t0 + ROUTER_READY_TIMEOUT
     ready: set[str] = set()
+    answered: set[str] = set()
     while time.time() < deadline:
         for name, ip in hosts:
             if name in ready:
                 continue
             info = _info(ip)
+            if info:
+                answered.add(name)
             if info and info.get("bbox") and info["bbox"] != before[name]:
                 ready.add(name)
         if len(ready) == len(hosts):
             log(f"    router serving {key} on {len(ready)} host(s)")
+            return
+        silent = [n for n, _ in hosts if n not in ready and n not in answered]
+        if ready and time.time() - t0 > SILENT_GRACE_S and len(ready) + len(silent) == len(hosts):
+            log(
+                f"    router serving {key} on {len(ready)} host(s); not verifiable from "
+                f"here (no answer at all): {', '.join(silent)}"
+            )
             return
         time.sleep(15)
     if ready:
