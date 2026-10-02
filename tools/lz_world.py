@@ -546,16 +546,23 @@ def run_continent(s3c, cont, order, max_mb, led) -> None:
         try:
             point_router_at(n.key)
             t0 = time.time()
-            rid = submit(
-                LZ_FFL,
-                "continental.lz.states.BuildStateLowZoomMap",
-                {
-                    "region": n.key,
-                    "slug": wp.slug(n.key),
-                    "label": wp.label(n.key),
-                    "output_base": OUTPUT_BASE,
-                },
-            )
+            prior = rec.get("map_runner") if rec.get("map_state") == "running" else None
+            if prior and run_state(prior) not in ("completed", "failed", "terminated", "?"):
+                # A driver restart while this region's map was building: adopt
+                # the live run rather than submit a duplicate beside it.
+                rid = prior
+                log(f"    adopting the run already in flight ({rid[:8]})")
+            else:
+                rid = submit(
+                    LZ_FFL,
+                    "continental.lz.states.BuildStateLowZoomMap",
+                    {
+                        "region": n.key,
+                        "slug": wp.slug(n.key),
+                        "label": wp.label(n.key),
+                        "output_base": OUTPUT_BASE,
+                    },
+                )
             rec.update(map_state="running", map_runner=rid)
             ledger_write(led)
             write_status(s3c, nodes, led, max_mb, order)
