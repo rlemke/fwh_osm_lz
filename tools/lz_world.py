@@ -534,6 +534,43 @@ def run_continent(s3c, cont, order, max_mb, led) -> None:
         st, err = wait(rid, GRAPH_TIMEOUT)
         log(f"  graphs: {st}" + (f" -- {err}" if err else ""))
 
+    # Two passes: a map that failed gets ONE more attempt once the continent's
+    # first pass is done. Measured 2026-10-03: three islands failed on one host
+    # with "the routing server stopped serving this region mid-run", a handler
+    # error marked permanent, so nothing retried them. The ledger records which
+    # host ran each attempt, so a repeat on the same host is visible.
+    for attempt_pass in (1, 2):
+        batch = (
+            todo
+            if attempt_pass == 1
+            else [
+                n
+                for n in todo
+                if led.get(n.key, {}).get("map_state") != "completed"
+                and led.get(n.key, {}).get("attempts", 0) < 2
+                and has_graph(s3c, n.key)
+            ]
+        )
+        if attempt_pass == 2 and batch:
+            log(
+                f"  retrying {len(batch)} failed map(s) once: "
+                + ", ".join(n.key for n in batch[:8])
+            )
+        _map_batch(s3c, cont, batch, nodes, led, max_mb, order)
+
+
+def _zoom_host(rid: str) -> str:
+    d = db()
+    run = d.runners.find_one({"uuid": rid}, {"workflow_id": 1})
+    t = run and d.tasks.find_one(
+        {"workflow_id": run["workflow_id"], "name": "osm.Roads.ZoomBuilder.BuildZoomLayers"},
+        {"server_id": 1},
+    )
+    srv = t and d.servers.find_one({"uuid": t.get("server_id")}, {"server_name": 1})
+    return (srv or {}).get("server_name", "") if srv else ""
+
+
+def _map_batch(s3c, cont, todo, nodes, led, max_mb, order) -> None:
     for i, n in enumerate(todo, 1):
         rec = led.setdefault(n.key, {})
         tag = f"[{cont} {i}/{len(todo)}] {n.key} ({n.mb:,.0f} MB)"
@@ -553,6 +590,7 @@ def run_continent(s3c, cont, order, max_mb, led) -> None:
                 rid = prior
                 log(f"    adopting the run already in flight ({rid[:8]})")
             else:
+                rec["attempts"] = rec.get("attempts", 0) + 1
                 rid = submit(
                     LZ_FFL,
                     "continental.lz.states.BuildStateLowZoomMap",
@@ -568,6 +606,7 @@ def run_continent(s3c, cont, order, max_mb, led) -> None:
             write_status(s3c, nodes, led, max_mb, order)
             st, err = wait(rid, max(3 * 3600, 4 * 60 * wp.estimate_minutes(n.mb)))
             rec.update(map_state=st, error=err, map_minutes=round((time.time() - t0) / 60, 1))
+            rec.setdefault("hosts", []).append(_zoom_host(rid))
             if st == "completed":
                 src, edges = map_output(rid)
                 rec["published"] = pub.publish(s3c, MAPS_BUCKET, n.key, wp.label(n.key), src, edges)
