@@ -112,10 +112,20 @@ def router_hosts() -> list[tuple[str, str]]:
     return out
 
 
-def db():
-    from pymongo import MongoClient
+_DB = None
 
-    return MongoClient(mongo_url(), serverSelectionTimeoutMS=15000).facetwork
+
+def db():
+    """ONE client for the driver's lifetime. This built a new MongoClient per
+    call -- every 30 s while a map ran -- and never closed any; each holds
+    sockets and monitor threads, so after ~20 h the driver died with "Too many
+    open files" (2026-10-03, mid-Africa)."""
+    global _DB
+    if _DB is None:
+        from pymongo import MongoClient
+
+        _DB = MongoClient(mongo_url(), serverSelectionTimeoutMS=15000).facetwork
+    return _DB
 
 
 # --- ledger + status ---------------------------------------------------------
@@ -294,9 +304,9 @@ def map_output(rid: str) -> tuple[str, int | None]:
     """Where RenderTiledMap's viewer landed, from the run's own step results."""
     d = db()
     run = d.runners.find_one({"uuid": rid}, {"workflow_id": 1})
-    edges, base = None, ""
+    edges, base, map_path = None, "", ""
     for st in d.steps.find({"workflow_id": run["workflow_id"]}, {"facet_name": 1, "attributes": 1}):
-        found = _find(st.get("attributes") or {}, ("output_path", "selected_edges"))
+        found = _find(st.get("attributes") or {}, ("output_path", "selected_edges", "map_path"))
         if edges is None and found.get("selected_edges") is not None:
             try:
                 edges = int(found["selected_edges"])
@@ -305,6 +315,14 @@ def map_output(rid: str) -> tuple[str, int | None]:
         op = found.get("output_path")
         if st.get("facet_name") == "osm.viz.RenderTiledMap" and isinstance(op, str) and op:
             base = Path(op).parent.name
+        mp = found.get("map_path")
+        if not map_path and isinstance(mp, str) and mp:
+            map_path = mp
+    if not base and map_path:
+        # The workflow's own yield names the viewer; measured 2026-10-03 on a
+        # completed map (Congo-Brazzaville) whose render step result was not
+        # where this looked, so a finished map was recorded as failed.
+        base = Path(map_path).parent.name
     if not base:
         raise RuntimeError(f"no RenderTiledMap output among the steps of {rid}")
     return f"osm-output/maps/tiled/{base}/", edges
