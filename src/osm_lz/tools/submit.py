@@ -66,11 +66,16 @@ def main() -> int:
 
     cmd = [
         cli,
-        "--primary", str(info.primary),
-        "--workflow", info.qualified_name,
-        "--inputs", args.inputs,
-        "--task-list", args.task_list,
-        "--log-format", "text",
+        "--primary",
+        str(info.primary),
+        "--workflow",
+        info.qualified_name,
+        "--inputs",
+        args.inputs,
+        "--task-list",
+        args.task_list,
+        "--log-format",
+        "text",
     ]
     for lib in library_files(info.primary):
         cmd.extend(["--library", str(lib)])

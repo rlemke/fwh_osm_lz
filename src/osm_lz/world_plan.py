@@ -236,3 +236,16 @@ def estimate_minutes(mb: float) -> float:
     """Map build time, fitted over the 49 US states built 2026-09
     (``0.010 x MB^1.46``; within ~20%, over-predicts at the top)."""
     return 0.010 * max(mb, 1.0) ** 1.46
+
+
+def estimate_memory_gb(mb: float) -> int:
+    """Peak memory of a region's zoom-layer build, GB, rounded up with headroom.
+
+    Two measured points from the 2026-09 US batch: Washington 392 MB -> 10.6 GB,
+    California 1,449 MB -> 22-25 GB (OOM). Sub-linear: ~10.6 x (MB/392)^0.63.
+    Used as a claim FLOOR, so it errs high -- a floor too low lets the step stack
+    with other work and be OOM-killed; one too high only makes it wait.
+    """
+    import math
+
+    return max(2, math.ceil(10.6 * (max(mb, 1.0) / 392.0) ** 0.63 + 1.5))

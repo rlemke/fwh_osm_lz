@@ -46,7 +46,8 @@ namespace continental.lz.states {
         output_base: String = "/scratch/output/lz-states",
         min_population: Long = 50000,
         profile: String = "car",
-        basemap: String = "dark"
+        basemap: String = "dark",
+        memory_gb: Long = 0
     ) => (edges: Long, map_path: String, layer_dir: String) andThen {
         extract = osm.ops.CacheRegion(region = $.region)
 
@@ -56,8 +57,13 @@ namespace continental.lz.states {
             cache = extract.cache,
             graph = gh.graph,
             min_population = $.min_population,
-            output_dir = $.output_base ++ "/" ++ $.slug
-        )
+            output_dir = $.output_base ++ "/" ++ $.slug,
+            memory_gb = $.memory_gb
+        ) with Requires(memory_gb = "$.memory_gb")
+        // ^ The zoom builder is the memory-heavy step (10.6 GB at a 392 MB
+        //   extract). With a floor it is claimed only where that much is FREE
+        //   now; without one it stacked with other work on a host and was
+        //   OOM-killed (2026-10-04). 0 = no floor.
 
         // One tileset per zoom band. The per-layer min_zoom is what makes the
         // reveal follow the map: the z2 tileset exists from map zoom 2, the z7

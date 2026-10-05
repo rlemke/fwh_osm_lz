@@ -20,7 +20,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from facetwork.emitter import emit_dict
 from facetwork.parser import FFLParser
 from facetwork.source import CompilerInput, FileOrigin, SourceEntry
@@ -72,9 +71,7 @@ def _compile_with_closure(primary: Path, library: list[Path]) -> dict:
     program_ast, _registry = parser.parse_sources(compiler_input)
 
     result = validate(program_ast)
-    assert not result.errors, "validation errors: " + "; ".join(
-        str(e) for e in result.errors
-    )
+    assert not result.errors, "validation errors: " + "; ".join(str(e) for e in result.errors)
 
     emitted = emit_dict(program_ast, include_locations=False)
     assert emitted.get("type") == "Program"

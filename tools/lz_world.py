@@ -617,6 +617,7 @@ def _map_batch(s3c, cont, todo, nodes, led, max_mb, order) -> None:
                         "slug": wp.slug(n.key),
                         "label": wp.label(n.key),
                         "output_base": OUTPUT_BASE,
+                        "memory_gb": wp.estimate_memory_gb(n.mb),
                     },
                 )
             rec.update(map_state="running", map_runner=rid)

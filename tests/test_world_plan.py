@@ -67,3 +67,11 @@ def test_a_region_whose_cut_produced_nothing_is_mapped_whole():
     n = plan(_sizes(), continents=["europe"], force={"europe/france": "cut produced no regions"})
     assert n["europe/france"].kind == "map"
     assert "europe/france" in [x.key for x in leaves(n, "europe")]
+
+
+def test_memory_floor_tracks_the_measured_build_peaks():
+    from osm_lz.world_plan import estimate_memory_gb
+
+    assert estimate_memory_gb(392) == 13  # Washington peaked at 10.6 GB
+    assert estimate_memory_gb(5) == 3  # small regions are cheap
+    assert 2 <= estimate_memory_gb(0.1) <= 3
