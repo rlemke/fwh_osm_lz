@@ -3,8 +3,8 @@
 Maps built before osm_geocoder's zoom export wrote ``routed`` have tiles without
 it, so the viewer cannot split a band into routed / name-kind. The pipeline's
 own outputs still hold the answer: ``edge_importance.jsonl`` records each edge's
-reveal zoom and its per-zoom SBS, and ``routed`` is SBS > 0 at the reveal zoom
-(the same rule the export now applies). This rebuilds each band archive from the
+per-zoom SBS, and ``routed`` in band N is SBS_N > 0 -- did THIS band's routes
+ride the edge (the same rule the export applies). This rebuilds each band archive from the
 run's ``roads_z<N>.geojson`` with that one attribute added, and nothing else
 changed: the tippecanoe command is read back out of the archive's own metadata,
 so zoom range, layer name and drop strategy are exactly what was published.
@@ -17,21 +17,26 @@ different roads under an old map's name.
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import subprocess
 from pathlib import Path
 
-from osm_lz.world_publish import pmtiles_metadata, s3_range_reader, tiles_fields
+from osm_lz.world_publish import pmtiles_metadata, s3_range_reader
 
 
-def routed_index(jsonl_lines) -> dict[int, bool]:
-    """{edge_id: routed} from edge_importance.jsonl lines."""
-    out: dict[int, bool] = {}
+def routed_index(jsonl_lines) -> dict[int, dict[int, bool]]:
+    """{band zoom: {edge_id: routed}} from edge_importance.jsonl lines.
+
+    Per BAND: an edge revealed at z2 as skeleton is still "routed" in the z5
+    band if z5's city-to-city routes rode it."""
+    out: dict[int, dict[int, bool]] = {}
     for line in jsonl_lines:
         if not line.strip():
             continue
         e = json.loads(line)
-        out[int(e["edgeId"])] = float((e.get("sbs") or {}).get(str(e["minZoom"]), 0.0)) > 0.0
+        for z, v in (e.get("sbs") or {}).items():
+            out.setdefault(int(z), {})[int(e["edgeId"])] = float(v) > 0.0
     return out
 
 
@@ -66,8 +71,8 @@ def add_routed(fc: dict, routed: dict[int, bool]) -> int:
 def retile_prefix(
     s3, bucket: str, prefix: str, layer_dir: Path, work: Path, tippecanoe: str = "tippecanoe"
 ) -> list[dict]:
-    """Rewrite every band archive under ``prefix`` with ``routed``; return a
-    summary per band. Bands already carrying it are left alone."""
+    """Rewrite every band archive the page draws with ``routed`` (recomputed,
+    so an older definition is replaced); return a summary per band."""
     layer_dir, work = Path(layer_dir), Path(work)
     work.mkdir(parents=True, exist_ok=True)
     with open(layer_dir / "edge_importance.jsonl", encoding="utf-8") as f:
@@ -92,9 +97,6 @@ def retile_prefix(
     plan = []
     for key in sorted(keys):
         meta = pmtiles_metadata(s3_range_reader(s3, bucket, key))
-        if "routed" in tiles_fields(meta):
-            plan.append((key, None, None, None))
-            continue
         out = work / Path(key).name
         src = work / (Path(key).stem + ".geojson")
         argv, layer_name = rebuild_command(meta["generator_options"], str(src), str(out))
@@ -109,13 +111,13 @@ def retile_prefix(
                 f"published tiles hold {published:,} -- the layer file is not the one "
                 "these tiles were built from; refusing"
             )
-        plan.append((key, argv, src, fc))
+        m = re.match(r"roads_z(\d)\.geojson$", layer_name)
+        if not m:
+            raise RuntimeError(f"{key}: cannot tell the band zoom from {layer_name}")
+        plan.append((key, argv, src, fc, int(m.group(1))))
     summary = []
-    for key, argv, src, fc in plan:
-        if argv is None:
-            summary.append({"key": key, "skipped": "already carries routed"})
-            continue
-        n = add_routed(fc, routed)
+    for key, argv, src, fc, zoom in plan:
+        n = add_routed(fc, routed.get(zoom, {}))
         Path(src).write_text(json.dumps(fc))
         subprocess.run(argv, check=True, capture_output=True, text=True, timeout=3600)
         out = argv[argv.index("-o") + 1]

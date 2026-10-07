@@ -32,13 +32,17 @@ def test_a_non_tippecanoe_command_is_refused():
         rt.rebuild_command("ogr2ogr -f MVT out in.geojson", "a", "b")
 
 
-def test_routed_is_sbs_at_the_reveal_zoom():
+def test_routed_is_per_band_not_per_reveal_zoom():
     lines = [
-        json.dumps({"edgeId": 1, "minZoom": 3, "sbs": {"3": 0.2, "4": 0.0}}),
-        json.dumps({"edgeId": 2, "minZoom": 3, "sbs": {"3": 0.0, "4": 0.9}}),  # routed later
+        # an Interstate: revealed at z2 as skeleton, where nothing routes, but
+        # ridden by every z5 route -- it is "routed" in the z5 band
+        json.dumps({"edgeId": 1, "minZoom": 2, "sbs": {"2": 0.0, "5": 0.8}}),
+        json.dumps({"edgeId": 2, "minZoom": 5, "sbs": {"2": 0.0, "5": 0.0}}),
         "",
     ]
-    assert rt.routed_index(lines) == {1: True, 2: False}
+    idx = rt.routed_index(lines)
+    assert idx[5] == {1: True, 2: False}
+    assert idx[2] == {1: False, 2: False}
 
 
 def test_add_routed_defaults_unknown_edges_to_name_kind():
