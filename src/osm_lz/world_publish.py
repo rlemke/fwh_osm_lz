@@ -82,10 +82,167 @@ def dest_prefix(key: str) -> str:
     return f"{LZ_PREFIX}{key.strip('/')}/"
 
 
+# --- routed cities -----------------------------------------------------------
+#
+# The zoom builder routes between CITY ANCHORS: for each zoom it takes the places
+# at or above that zoom's population threshold, largest first, up to the zoom's
+# target count (osm_geocoder.handlers.roads.zoom_sbs.build_anchors). Replaying
+# that rule over the run's own cities.geojson gives exactly the places routes
+# were sampled between, and the zoom each one FIRST anchored at -- its tier.
+# Where a state has too few cities the builder tops up with high-degree road
+# nodes; those are not places and are not drawn.
+
+
+def anchor_rules() -> tuple[dict[int, int], dict[int, int]]:
+    """(population threshold, target count) per zoom, from the builder itself so
+    the dots cannot drift from what was routed."""
+    from osm_geocoder.handlers.roads.zoom_sbs import ANCHOR_POP_THRESHOLDS, ANCHOR_TARGETS
+
+    return dict(ANCHOR_POP_THRESHOLDS), dict(ANCHOR_TARGETS)
+
+
+def _pop(props: dict) -> int:
+    p = props.get("population", 0)
+    try:
+        return int(p)
+    except (TypeError, ValueError):
+        return 0
+
+
+def routed_cities(fc: dict, thresholds: dict[int, int], targets: dict[int, int]) -> dict:
+    """The FeatureCollection of places routes were sampled between, each carrying
+    ``tier`` (the first zoom it anchored at), ``name``, ``place``, ``population``."""
+    feats = [
+        f
+        for f in fc.get("features", [])
+        if len((f.get("geometry") or {}).get("coordinates") or []) >= 2
+    ]
+    feats.sort(key=lambda f: _pop(f.get("properties") or {}), reverse=True)
+    tier: dict[int, int] = {}
+    for z in sorted(thresholds):
+        picked = [
+            i for i, f in enumerate(feats) if _pop(f.get("properties") or {}) >= thresholds[z]
+        ]
+        for i in picked[: targets.get(z, len(picked))]:
+            tier.setdefault(i, z)
+    out = []
+    for i, z in sorted(tier.items()):
+        p = feats[i].get("properties") or {}
+        lon, lat = feats[i]["geometry"]["coordinates"][:2]
+        out.append(
+            {
+                "type": "Feature",
+                "properties": {
+                    "name": p.get("name") or "(unnamed)",
+                    "place": p.get("place") or "",
+                    "population": _pop(p),
+                    "tier": z,
+                },
+                "geometry": {"type": "Point", "coordinates": [round(lon, 6), round(lat, 6)]},
+            }
+        )
+    return {"type": "FeatureCollection", "features": out}
+
+
+_CITIES_BEGIN = "<!-- fw:cities -->"
+_CITIES_END = "<!-- /fw:cities -->"
+
+# Dots coloured by the zoom a place first anchored routing at (z2 = the biggest
+# cities), sized by population; click for name and population. Built with
+# textContent, never innerHTML: names are OSM data.
+CITIES_JS = """<!-- fw:cities -->
+<style>
+.fw-city-pop{font:12.5px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#1a2332}
+.fw-city-pop b{font-size:14px} .fw-city-pop .m{color:#5a6478}
+#legend .ctier{display:flex;flex-wrap:wrap;gap:3px 8px;margin:2px 0 2px 20px;font-size:11px;color:#bbb}
+#legend .ctier span{display:inline-flex;align-items:center;gap:3px}
+#legend .ctier i{width:9px;height:9px;border-radius:50%;border:1px solid #111;display:inline-block}
+</style>
+<script>
+(function(){
+ var BUILT=__BUILT__;
+ var TIERS=[[2,'#ffffff','500k+'],[3,'#ffe066','200k+'],[4,'#ffa94d','80k+'],[5,'#f06595','30k+'],[6,'#9775fa','10k+'],[7,'#4dabf7','5k+']];
+ var color=['match',['get','tier']];TIERS.forEach(function(t){color.push(t[0],t[1]);});color.push('#cccccc');
+ if(BUILT){var sm=document.querySelector('#title small');
+   if(sm){var s=document.createElement('span');s.textContent=' \\u00b7 built '+BUILT;sm.appendChild(s);}}
+ var lg=document.getElementById('legend');
+ if(lg){var row=document.createElement('label');row.className='row';
+   var cb=document.createElement('input');cb.type='checkbox';cb.className='lyr';cb.checked=true;cb.setAttribute('data-layer','fwcities');
+   var sw=document.createElement('span');sw.className='sw';sw.style.cssText='background:#f06595;border-radius:50%';
+   var tx=document.createElement('span');tx.id='fw-city-label';tx.textContent='routed cities';
+   row.appendChild(cb);row.appendChild(sw);row.appendChild(tx);
+   var key=document.createElement('div');key.className='ctier';
+   TIERS.forEach(function(t){var e=document.createElement('span');var d=document.createElement('i');d.style.background=t[1];
+     e.appendChild(d);e.appendChild(document.createTextNode('z'+t[0]+' '+t[2]));key.appendChild(e);});
+   var btns=lg.querySelector('.lyrbtns');lg.insertBefore(row,btns);lg.insertBefore(key,btns);
+   cb.addEventListener('change',function(){applyLayer('fwcities',cb.checked);});}
+ LAYER_IDS.fwcities=['fwcities'];
+ var data=null;
+ function add(){
+   if(!data||map.getSource('fwcities'))return;
+   map.addSource('fwcities',{type:'geojson',data:data});
+   map.addLayer({id:'fwcities',type:'circle',source:'fwcities',
+     paint:{'circle-color':color,
+       'circle-radius':['interpolate',['linear'],['zoom'],3,['interpolate',['linear'],['sqrt',['get','population']],70,2,1000,7],
+                                                     9,['interpolate',['linear'],['sqrt',['get','population']],70,4,1000,12]],
+       'circle-stroke-color':'#111','circle-stroke-width':1,'circle-opacity':0.92},
+     layout:{'circle-sort-key':['get','population']}});
+   syncLayers();
+ }
+ fetch(here+'cities.geojson').then(function(r){if(!r.ok)throw new Error('cities.geojson '+r.status);return r.json();})
+  .then(function(j){data=j;var l=document.getElementById('fw-city-label');
+     if(l)l.textContent='routed cities ('+j.features.length.toLocaleString()+')';
+     if(map.isStyleLoaded())add();else map.once('load',add);})
+  .catch(function(e){showErr('city dots: '+e.message);});
+ map.on('styledata',function(){if(data&&!map.getSource('fwcities'))add();});
+ map.on('mouseenter','fwcities',function(){map.getCanvas().style.cursor='pointer';});
+ map.on('mouseleave','fwcities',function(){map.getCanvas().style.cursor='';});
+ map.on('click','fwcities',function(e){
+   var f=e.features&&e.features[0];if(!f)return;var p=f.properties;
+   var box=document.createElement('div');box.className='fw-city-pop';
+   var b=document.createElement('b');b.textContent=p.name;box.appendChild(b);
+   function line(t,cls){var d=document.createElement('div');if(cls)d.className=cls;d.textContent=t;box.appendChild(d);}
+   line('Population: '+Number(p.population).toLocaleString());
+   if(p.place)line('OSM place: '+p.place,'m');
+   line('Routing anchor from road zoom z'+p.tier,'m');
+   new maplibregl.Popup({offset:8}).setLngLat(f.geometry.coordinates).setDOMContent(box).addTo(map);
+ });
+})();
+</script>
+<!-- /fw:cities -->
+"""
+
+
+def inject_cities(html: str, built: str | None = None) -> str:
+    """Add the routed-city dot layer to a tiled viewer page. Idempotent: an
+    earlier injection is replaced, never stacked."""
+    if _CITIES_BEGIN in html:
+        a = html.index(_CITIES_BEGIN)
+        b = html.index(_CITIES_END, a) + len(_CITIES_END)
+        html = html[:a] + html[b:].lstrip("\n")
+    if "</body>" not in html:
+        raise ValueError("viewer page has no </body> to inject the city layer before")
+    block = CITIES_JS.replace("__BUILT__", json.dumps(built or ""))
+    i = html.rindex("</body>")
+    return html[:i] + block + html[i:]
+
+
 def publish(
-    s3, bucket: str, key: str, title: str, src_prefix: str, edges: int | None = None
+    s3,
+    bucket: str,
+    key: str,
+    title: str,
+    src_prefix: str,
+    edges: int | None = None,
+    cities: dict | None = None,
+    built: str | None = None,
 ) -> str:
-    """Copy the viewer at ``src_prefix`` to the region's gallery key; return it."""
+    """Copy the viewer at ``src_prefix`` to the region's gallery key; return it.
+
+    ``cities`` is the routed-city FeatureCollection (see :func:`routed_cities`);
+    given, it is stored beside the page and drawn as clickable dots. ``built`` is
+    the date the map was BUILT (YYYY-MM-DD) -- not the date of this copy, which
+    for a re-filed map can be weeks later. Defaults to today."""
     dst = dest_prefix(key)
     objs = []
     for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=src_prefix):
@@ -101,7 +258,7 @@ def publish(
         if rel == "index.html":
             html_key = o["Key"]
             continue
-        if rel.endswith(".meta.json"):
+        if rel.endswith(".meta.json") or rel == "cities.geojson":
             continue
         s3.copy_object(Bucket=bucket, Key=dst + rel, CopySource={"Bucket": bucket, "Key": o["Key"]})
         total += o["Size"]
@@ -110,9 +267,24 @@ def publish(
     html = s3.get_object(Bucket=bucket, Key=html_key)["Body"].read().decode("utf-8", "replace")
     if 'id="about-map"' in html:  # idempotent: drop an older panel
         html = html[: html.index("<style>\n#about-map")] + "</html>"
-    when = datetime.now(UTC).strftime("%Y-%m-%d")
+    when = built or datetime.now(UTC).strftime("%Y-%m-%d")
     result = f"<li><b>{edges:,}</b> logical edges selected across zooms 2-7</li>" if edges else ""
     result += f"<li>{total / 1e6:.0f} MB of streamed vector tiles, six zoom bands</li>"
+    n_cities = None
+    if cities is not None:
+        n_cities = len(cities.get("features", []))
+        s3.put_object(
+            Bucket=bucket,
+            Key=dst + "cities.geojson",
+            Body=json.dumps(cities, separators=(",", ":")).encode(),
+            ContentType="application/geo+json",
+        )
+        html = inject_cities(html, when)
+        result += (
+            f"<li><b>{n_cities:,}</b> cities routes were sampled between, drawn as dots "
+            "coloured by the zoom they first anchored at &mdash; click one for its "
+            "name and population</li>"
+        )
     panel = (
         PANEL.replace("__TITLE__", f"{title} low-zoom road network")
         .replace("__REGION__", key)
@@ -131,7 +303,12 @@ def publish(
                 "title": f"{title} low-zoom road network",
                 "generated_at": when,
                 "size_bytes": len(body),
-                "extra": {"region": key, "tiles_bytes": total, "selected_edges": edges},
+                "extra": {
+                    "region": key,
+                    "tiles_bytes": total,
+                    "selected_edges": edges,
+                    "routed_cities": n_cities,
+                },
             },
             indent=2,
         ).encode(),

@@ -183,6 +183,8 @@ def write_status(
             "reason": n.reason or rec.get("error", "")[:300],
             "children": n.children,
         }
+        if rec.get("built"):
+            out["nodes"][key]["built"] = rec["built"]
     s3c.put_object(
         Bucket=MAPS_BUCKET,
         Key=pub.LZ_PREFIX + "_status.json",
@@ -216,6 +218,22 @@ def finished_maps(s3c) -> set[str]:
             if k.endswith("/index.html"):
                 done.add(k[len(pub.LZ_PREFIX) : -len("/index.html")])
     return done
+
+
+def routed_cities_for(s3c, key: str) -> dict | None:
+    """The cities this region's routes were sampled between, from the run's own
+    cities.geojson (BuildZoomLayers uploads its whole work dir to the s3
+    output_dir). None -- and a loud log -- when it cannot be read: the map still
+    publishes, without dots, rather than failing a finished build over them."""
+    base = OUTPUT_BASE.removeprefix("s3://")
+    bucket, _, prefix = base.partition("/")
+    k = f"{prefix.rstrip('/')}/{wp.slug(key)}/cities.geojson"
+    try:
+        fc = json.loads(s3c.get_object(Bucket=bucket, Key=k)["Body"].read())
+        return pub.routed_cities(fc, *pub.anchor_rules())
+    except Exception as e:  # noqa: BLE001 - dots are an overlay, not the map
+        log(f"    no city dots for {key}: cannot read s3://{bucket}/{k}: {e}")
+        return None
 
 
 def has_graph(s3c, key: str) -> bool:
@@ -628,8 +646,21 @@ def _map_batch(s3c, cont, todo, nodes, led, max_mb, order) -> None:
             rec.setdefault("hosts", []).append(_zoom_host(rid))
             if st == "completed":
                 src, edges = map_output(rid)
-                rec["published"] = pub.publish(s3c, MAPS_BUCKET, n.key, wp.label(n.key), src, edges)
+                cities = routed_cities_for(s3c, n.key)
+                rec["built"] = datetime.now(UTC).strftime("%Y-%m-%d")
+                rec["published"] = pub.publish(
+                    s3c,
+                    MAPS_BUCKET,
+                    n.key,
+                    wp.label(n.key),
+                    src,
+                    edges,
+                    cities=cities,
+                    built=rec["built"],
+                )
                 rec["edges"] = edges
+                if cities is not None:
+                    rec["routed_cities"] = len(cities["features"])
             log(f"  {st} in {rec['map_minutes']:.0f} min" + (f" -- {err}" if err else ""))
         except Exception as e:  # noqa: BLE001 - one region must not stop the world
             rec.update(map_state="failed", error=f"driver: {e}"[:400])
