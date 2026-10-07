@@ -213,18 +213,125 @@ CITIES_JS = """<!-- fw:cities -->
 """
 
 
-def inject_cities(html: str, built: str | None = None) -> str:
-    """Add the routed-city dot layer to a tiled viewer page. Idempotent: an
-    earlier injection is replaced, never stacked."""
-    if _CITIES_BEGIN in html:
-        a = html.index(_CITIES_BEGIN)
-        b = html.index(_CITIES_END, a) + len(_CITIES_END)
+def _inject(html: str, begin: str, end: str, block: str) -> str:
+    """Put ``block`` before </body>, replacing an earlier copy -- never stacking."""
+    if begin in html:
+        a = html.index(begin)
+        b = html.index(end, a) + len(end)
         html = html[:a] + html[b:].lstrip("\n")
     if "</body>" not in html:
-        raise ValueError("viewer page has no </body> to inject the city layer before")
-    block = CITIES_JS.replace("__BUILT__", json.dumps(built or ""))
+        raise ValueError("viewer page has no </body> to inject before")
     i = html.rindex("</body>")
     return html[:i] + block + html[i:]
+
+
+def inject_cities(html: str, built: str | None = None) -> str:
+    """Add the routed-city dot layer to a tiled viewer page. Idempotent."""
+    return _inject(
+        html, _CITIES_BEGIN, _CITIES_END, CITIES_JS.replace("__BUILT__", json.dumps(built or ""))
+    )
+
+
+# --- routed vs name/kind -----------------------------------------------------
+#
+# Each zoom band's legend row becomes two checkboxes. "routed" = edges sampled
+# routes rode at the zoom the edge was revealed at (the `routed` attribute
+# osm_geocoder's zoom export writes); "name/kind" = everything else -- admitted
+# by class, the motorway/trunk skeleton, backbone repair, the sparse-cell top-up,
+# or as part of a corridor whose other edges were routed. Both ticked = no
+# filter, i.e. the band exactly as it drew before. The band's own label still
+# toggles both. Only injected when every band's tiles carry the attribute: on
+# tiles without it, "routed" would silently show nothing.
+
+_SPLIT_BEGIN = "<!-- fw:route-split -->"
+_SPLIT_END = "<!-- /fw:route-split -->"
+
+SPLIT_JS = """<!-- fw:route-split -->
+<style>
+#legend .rsplit{display:flex;gap:10px;margin:0 0 3px 20px;font-size:11px;color:#bbb}
+#legend .rsplit label{display:inline-flex;align-items:center;gap:3px;cursor:pointer}
+#legend .rsplit label:hover{color:#fff}
+#legend .rsplit input{margin:0;width:11px;height:11px;accent-color:#9ecbff;cursor:pointer}
+</style>
+<script>
+(function(){
+ var st={};
+ var PARTS=[['r','routed','sampled routes between cities rode this road at this zoom'],
+            ['o','name/kind','admitted by road class or name: motorway/trunk skeleton, class score, backbone repair, rural top-up, or the rest of a routed corridor']];
+ function filt(s){if(s.r&&s.o)return null;return s.r?['==',['get','routed'],true]:['!=',['get','routed'],true];}
+ function applyBand(src){var s=st[src];(LAYER_IDS[src]||[]).forEach(function(id){
+   if(!map.getLayer(id))return;
+   map.setLayoutProperty(id,'visibility',(s.r||s.o)?'visible':'none');map.setFilter(id,filt(s));});}
+ var orig=applyLayer;
+ applyLayer=function(src,on){
+   var m=/^(.*):(r|o)$/.exec(src);
+   if(m&&st[m[1]]){st[m[1]][m[2]]=on;applyBand(m[1]);return;}
+   if(st[src]){st[src].r=st[src].o=on;applyBand(src);return;}
+   orig(src,on);};
+ document.querySelectorAll('#legend input.lyr').forEach(function(cb){
+   var src=cb.getAttribute('data-layer');
+   if(!/^layer[0-9]+$/.test(src))return;
+   st[src]={r:cb.checked,o:cb.checked};
+   cb.classList.remove('lyr');cb.style.display='none';
+   var row=cb.parentNode,sub=document.createElement('div'),subs=[];
+   sub.className='rsplit';
+   PARTS.forEach(function(p){
+     var l=document.createElement('label');l.title=p[2];
+     var c=document.createElement('input');c.type='checkbox';c.className='lyr';c.checked=cb.checked;
+     c.setAttribute('data-layer',src+':'+p[0]);
+     c.addEventListener('change',function(){applyLayer(src+':'+p[0],c.checked);});
+     l.appendChild(c);l.appendChild(document.createTextNode(p[1]));sub.appendChild(l);subs.push(c);});
+   // the band's own label (its hidden box) toggles both halves
+   cb.addEventListener('change',function(){subs.forEach(function(c){c.checked=cb.checked;});applyLayer(src,cb.checked);});
+   row.parentNode.insertBefore(sub,row.nextSibling);
+ });
+ syncLayers();
+})();
+</script>
+<!-- /fw:route-split -->
+"""
+
+
+def inject_route_split(html: str) -> str:
+    """Split each zoom band's legend row into routed / name-kind. Idempotent."""
+    return _inject(html, _SPLIT_BEGIN, _SPLIT_END, SPLIT_JS)
+
+
+def pmtiles_metadata(read_range) -> dict:
+    """A PMTiles v3 archive's JSON metadata, given ``read_range(offset, length)``.
+
+    Reads only the 127-byte header and the metadata block, so checking a 36 MB
+    archive costs two small range GETs."""
+    import gzip
+    import struct
+
+    head = read_range(0, 127)
+    if head[:7] != b"PMTiles" or head[7] != 3:
+        raise ValueError("not a PMTiles v3 archive")
+    meta_off, meta_len = struct.unpack_from("<QQ", head, 24)
+    raw = read_range(meta_off, meta_len)
+    if head[97] == 2:  # internal compression: gzip
+        raw = gzip.decompress(raw)
+    return json.loads(raw)
+
+
+def tiles_fields(meta: dict) -> set[str]:
+    return {f for layer in meta.get("vector_layers") or [] for f in (layer.get("fields") or {})}
+
+
+def s3_range_reader(s3, bucket: str, key: str):
+    def read(off: int, n: int) -> bytes:
+        r = s3.get_object(Bucket=bucket, Key=key, Range=f"bytes={off}-{off + n - 1}")
+        return r["Body"].read()
+
+    return read
+
+
+def bands_have_routed(s3, bucket: str, keys: list[str]) -> bool:
+    """True when there are band archives and EVERY one carries `routed`."""
+    return bool(keys) and all(
+        "routed" in tiles_fields(pmtiles_metadata(s3_range_reader(s3, bucket, k))) for k in keys
+    )
 
 
 def publish(
@@ -251,6 +358,7 @@ def publish(
         raise RuntimeError(f"nothing at s3://{bucket}/{src_prefix}")
     total = 0
     html_key = None
+    bands: list[str] = []
     for o in objs:
         rel = o["Key"][len(src_prefix) :]
         if not rel or rel.endswith("/"):
@@ -262,6 +370,8 @@ def publish(
             continue
         s3.copy_object(Bucket=bucket, Key=dst + rel, CopySource={"Bucket": bucket, "Key": o["Key"]})
         total += o["Size"]
+        if rel.endswith(".pmtiles"):
+            bands.append(dst + rel)
     if not html_key:
         raise RuntimeError(f"no index.html under s3://{bucket}/{src_prefix}")
     html = s3.get_object(Bucket=bucket, Key=html_key)["Body"].read().decode("utf-8", "replace")
@@ -284,6 +394,17 @@ def publish(
             f"<li><b>{n_cities:,}</b> cities routes were sampled between, drawn as dots "
             "coloured by the zoom they first anchored at &mdash; click one for its "
             "name and population</li>"
+        )
+    # Only the bands this page draws: a source prefix can also hold archives an
+    # earlier run left under other names, which would never carry `routed`.
+    split = bands_have_routed(s3, bucket, [b for b in bands if b.rsplit("/", 1)[-1] in html])
+    if split:
+        html = inject_route_split(html)
+        result += (
+            "<li>Each zoom band splits into <b>routed</b> (roads sampled routes rode at "
+            "that zoom) and <b>name/kind</b> (admitted by class or name: the "
+            "motorway/trunk skeleton, class score, backbone repair, rural top-up, or "
+            "the rest of a routed corridor). Both ticked is the full band.</li>"
         )
     panel = (
         PANEL.replace("__TITLE__", f"{title} low-zoom road network")
@@ -308,6 +429,7 @@ def publish(
                     "tiles_bytes": total,
                     "selected_edges": edges,
                     "routed_cities": n_cities,
+                    "route_split": split,
                 },
             },
             indent=2,
