@@ -62,3 +62,14 @@ def test_injection_is_idempotent_and_carries_the_build_date():
 def test_names_are_never_written_as_html():
     # OSM names reach the popup through textContent only
     assert "innerHTML" not in pub.CITIES_JS
+
+
+def test_admin_areas_are_dropped_when_the_builder_says_so():
+    fc = {"features": [_city("Seattle", 737_015), _city("Washington", 7_958_180, place="state")]}
+    got = [
+        f["properties"]["name"]
+        for f in pub.routed_cities(fc, THRESH, TARGET, lambda p: p.get("place") != "state")[
+            "features"
+        ]
+    ]
+    assert got == ["Seattle"]

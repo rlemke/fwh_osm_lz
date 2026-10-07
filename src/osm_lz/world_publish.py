@@ -89,16 +89,20 @@ def dest_prefix(key: str) -> str:
 # target count (osm_geocoder.handlers.roads.zoom_sbs.build_anchors). Replaying
 # that rule over the run's own cities.geojson gives exactly the places routes
 # were sampled between, and the zoom each one FIRST anchored at -- its tier.
-# Where a state has too few cities the builder tops up with high-degree road
-# nodes; those are not places and are not drawn.
+# ``keep`` is the builder's settlement test: admin areas (state/county/country
+# centroids) carry a population but are not routed to.
 
 
-def anchor_rules() -> tuple[dict[int, int], dict[int, int]]:
-    """(population threshold, target count) per zoom, from the builder itself so
-    the dots cannot drift from what was routed."""
-    from osm_geocoder.handlers.roads.zoom_sbs import ANCHOR_POP_THRESHOLDS, ANCHOR_TARGETS
+def anchor_rules() -> tuple[dict[int, int], dict[int, int], object]:
+    """(population threshold, target count, settlement test), from the builder
+    itself so the dots cannot drift from what was routed."""
+    from osm_geocoder.handlers.roads.zoom_sbs import (
+        ANCHOR_POP_THRESHOLDS,
+        ANCHOR_TARGETS,
+        is_settlement,
+    )
 
-    return dict(ANCHOR_POP_THRESHOLDS), dict(ANCHOR_TARGETS)
+    return dict(ANCHOR_POP_THRESHOLDS), dict(ANCHOR_TARGETS), is_settlement
 
 
 def _pop(props: dict) -> int:
@@ -109,13 +113,14 @@ def _pop(props: dict) -> int:
         return 0
 
 
-def routed_cities(fc: dict, thresholds: dict[int, int], targets: dict[int, int]) -> dict:
+def routed_cities(fc: dict, thresholds: dict[int, int], targets: dict[int, int], keep=None) -> dict:
     """The FeatureCollection of places routes were sampled between, each carrying
     ``tier`` (the first zoom it anchored at), ``name``, ``place``, ``population``."""
     feats = [
         f
         for f in fc.get("features", [])
         if len((f.get("geometry") or {}).get("coordinates") or []) >= 2
+        and (keep is None or keep(f.get("properties") or {}))
     ]
     feats.sort(key=lambda f: _pop(f.get("properties") or {}), reverse=True)
     tier: dict[int, int] = {}
@@ -259,9 +264,16 @@ SPLIT_JS = """<!-- fw:route-split -->
  var PARTS=[['r','routed','sampled routes between cities rode this road at this zoom'],
             ['o','name/kind','admitted by road class or name: motorway/trunk skeleton, class score, backbone repair, rural top-up, or the rest of a routed corridor']];
  function filt(s){if(s.r&&s.o)return null;return s.r?['==',['get','routed'],true]:['!=',['get','routed'],true];}
+ // Set only what differs. Every set fires 'styledata', and the page re-applies
+ // the legend ON 'styledata' -- so an unconditional setFilter(null) on a layer
+ // whose filter is undefined (MapLibre does not count those equal) re-fires it
+ // forever: the style never finishes loading and no road is ever drawn.
  function applyBand(src){var s=st[src];(LAYER_IDS[src]||[]).forEach(function(id){
    if(!map.getLayer(id))return;
-   map.setLayoutProperty(id,'visibility',(s.r||s.o)?'visible':'none');map.setFilter(id,filt(s));});}
+   var v=(s.r||s.o)?'visible':'none';
+   if((map.getLayoutProperty(id,'visibility')||'visible')!==v)map.setLayoutProperty(id,'visibility',v);
+   var f=filt(s);
+   if(JSON.stringify(map.getFilter(id)||null)!==JSON.stringify(f))map.setFilter(id,f);});}
  var orig=applyLayer;
  applyLayer=function(src,on){
    var m=/^(.*):(r|o)$/.exec(src);
