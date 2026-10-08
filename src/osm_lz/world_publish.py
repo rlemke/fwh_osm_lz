@@ -72,7 +72,7 @@ PANEL = """
 <ul class="warn">
 <li>Bypass and ring flags are computed and exported but not styled differently.</li>
 <li>Layers are cumulative, so a higher zoom's tiles repeat the roads below it.</li>
-</ul>
+__NOTES__</ul>
 </div>
 </details>
 </html>"""
@@ -355,6 +355,7 @@ def publish(
     edges: int | None = None,
     cities: dict | None = None,
     built: str | None = None,
+    notes: list[str] | None = None,
 ) -> str:
     """Copy the viewer at ``src_prefix`` to the region's gallery key; return it.
 
@@ -423,6 +424,7 @@ def publish(
         .replace("__REGION__", key)
         .replace("__WHEN__", when)
         .replace("__RESULT__", result)
+        .replace("__NOTES__", "".join(f"<li>{n}</li>" for n in (notes or [])))
     )
     html = html[: html.rindex("</html>")] + panel
     body = html.encode("utf-8")
