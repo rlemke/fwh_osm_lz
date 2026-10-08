@@ -227,7 +227,16 @@ def routed_cities_for(s3c, key: str) -> dict | None:
     publishes, without dots, rather than failing a finished build over them."""
     base = OUTPUT_BASE.removeprefix("s3://")
     bucket, _, prefix = base.partition("/")
-    k = f"{prefix.rstrip('/')}/{wp.slug(key)}/cities.geojson"
+    d = f"{prefix.rstrip('/')}/{wp.slug(key)}/"
+    # The builder's own record of what it anchored (z2/z3 floors and region
+    # scaling included) -- preferred over re-deriving the rule here.
+    try:
+        return json.loads(
+            s3c.get_object(Bucket=bucket, Key=d + "anchor_cities.geojson")["Body"].read()
+        )
+    except Exception:  # noqa: BLE001 - older builds have no record; replay below
+        pass
+    k = d + "cities.geojson"
     try:
         fc = json.loads(s3c.get_object(Bucket=bucket, Key=k)["Body"].read())
         return pub.routed_cities(fc, *pub.anchor_rules())
