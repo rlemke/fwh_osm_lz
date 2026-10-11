@@ -102,4 +102,53 @@ namespace continental.lz.states {
             layer_dir = lz.result.output_dir
         )
     }
+    /** A COUNTRY's top bands (z2-z4), routed over one graph so city pairs cross
+        state lines (San Francisco - New York is a z2 pair). `region` is a
+        MAJOR-ROADS extract (motorway..secondary + links + ferries + place
+        nodes) -- the full country does not fit the zoom builder -- so only the
+        bands those classes carry are routed and tiled. Same contract as
+        BuildStateLowZoomMap otherwise: the graphhopper role must already be
+        serving this region. */
+    workflow BuildCountryLowZoomMap(
+        region: String,
+        slug: String,
+        label: String,
+        output_base: String = "/scratch/output/lz-country",
+        min_population: Long = 50000,
+        profile: String = "car",
+        basemap: String = "dark",
+        memory_gb: Long = 0,
+        route_max_zoom: Long = 4
+    ) => (edges: Long, map_path: String, layer_dir: String) andThen {
+        extract = osm.ops.CacheRegion(region = $.region)
+
+        gh = osm.ops.GraphHopper.BuildGraph(cache = extract.cache, profile = $.profile)
+
+        lz = osm.Roads.ZoomBuilder.BuildZoomLayers(
+            cache = extract.cache,
+            graph = gh.graph,
+            min_population = $.min_population,
+            output_dir = $.output_base ++ "/" ++ $.slug,
+            memory_gb = $.memory_gb,
+            route_max_zoom = $.route_max_zoom
+        ) with Requires(memory_gb = "$.memory_gb")
+
+        t2 = osm.Tiles.BuildVectorTiles(geojson_path = lz.result.output_dir ++ "/roads_z2.geojson", layer_name = $.slug ++ "_roads_z2", min_zoom = 2, max_zoom = 14)
+        t3 = osm.Tiles.BuildVectorTiles(geojson_path = lz.result.output_dir ++ "/roads_z3.geojson", layer_name = $.slug ++ "_roads_z3", min_zoom = 3, max_zoom = 14)
+        t4 = osm.Tiles.BuildVectorTiles(geojson_path = lz.result.output_dir ++ "/roads_z4.geojson", layer_name = $.slug ++ "_roads_z4", min_zoom = 4, max_zoom = 14)
+
+        map = osm.viz.RenderTiledMap(
+            tiles = [t2.result.output_path, t3.result.output_path, t4.result.output_path],
+            layer_names = [$.slug ++ "_roads_z2", $.slug ++ "_roads_z3", $.slug ++ "_roads_z4"],
+            colors = ["#7f0000", "#d7301f", "#fc8d59"],
+            title = $.label ++ " low-zoom road network - graded reveal",
+            basemap = $.basemap
+        )
+
+        yield BuildCountryLowZoomMap(
+            edges = lz.result.selected_edges,
+            map_path = map.result.output_path,
+            layer_dir = lz.result.output_dir
+        )
+    }
 }
