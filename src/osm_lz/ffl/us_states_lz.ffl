@@ -118,7 +118,10 @@ namespace continental.lz.states {
         profile: String = "car",
         basemap: String = "dark",
         memory_gb: Long = 0,
-        route_max_zoom: Long = 4
+        route_max_zoom: Long = 4,
+        // ~1 ms per routed km to match onto the graph: z4's default 50k pairs
+        // at >1,000 km each is ~18 h at country scale; 8k is ~3 h.
+        max_pairs: Long = 8000
     ) => (edges: Long, map_path: String, layer_dir: String) andThen {
         extract = osm.ops.CacheRegion(region = $.region)
 
@@ -130,7 +133,8 @@ namespace continental.lz.states {
             min_population = $.min_population,
             output_dir = $.output_base ++ "/" ++ $.slug,
             memory_gb = $.memory_gb,
-            route_max_zoom = $.route_max_zoom
+            route_max_zoom = $.route_max_zoom,
+            max_pairs = $.max_pairs
         ) with Requires(memory_gb = "$.memory_gb")
 
         t2 = osm.Tiles.BuildVectorTiles(geojson_path = lz.result.output_dir ++ "/roads_z2.geojson", layer_name = $.slug ++ "_roads_z2", min_zoom = 2, max_zoom = 14)
