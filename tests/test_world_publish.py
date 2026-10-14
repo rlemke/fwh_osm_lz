@@ -104,3 +104,8 @@ def test_route_split_staggers_name_kind_one_zoom_later():
     assert "d.minzoom=z+1" in js  # name/kind copies start one zoom after the band
     assert "setLayerZoomRange(id,z,24)" in js  # routed originals start at the band
     assert "'ferry'" in js
+
+
+def test_city_tiers_are_staged_by_zoom():
+    """A tier appears at its own zoom, with the routes it anchored."""
+    assert "filter:['<=',['get','tier'],['zoom']]" in pub.CITIES_JS

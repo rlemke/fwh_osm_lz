@@ -153,7 +153,9 @@ _CITIES_BEGIN = "<!-- fw:cities -->"
 _CITIES_END = "<!-- /fw:cities -->"
 
 # Dots coloured by the zoom a place first anchored routing at (z2 = the biggest
-# cities), sized by population; click for name and population. Built with
+# cities), sized by population; click for name and population. A tier appears
+# at its own zoom, with the routes it anchored, so density grows with zoom
+# instead of every tier crowding z2. Built with
 # textContent, never innerHTML: names are OSM data.
 CITIES_JS = """<!-- fw:cities -->
 <style>
@@ -174,7 +176,7 @@ CITIES_JS = """<!-- fw:cities -->
  if(lg){var row=document.createElement('label');row.className='row';
    var cb=document.createElement('input');cb.type='checkbox';cb.className='lyr';cb.checked=true;cb.setAttribute('data-layer','fwcities');
    var sw=document.createElement('span');sw.className='sw';sw.style.cssText='background:#f06595;border-radius:50%';
-   var tx=document.createElement('span');tx.id='fw-city-label';tx.textContent='routed cities';
+   var tx=document.createElement('span');tx.id='fw-city-label';tx.textContent='routed cities';tx.title='each tier appears at its zoom, with the routes it anchored';
    row.appendChild(cb);row.appendChild(sw);row.appendChild(tx);
    var key=document.createElement('div');key.className='ctier';
    TIERS.forEach(function(t){var e=document.createElement('span');var d=document.createElement('i');d.style.background=t[1];
@@ -191,6 +193,7 @@ CITIES_JS = """<!-- fw:cities -->
        'circle-radius':['interpolate',['linear'],['zoom'],3,['interpolate',['linear'],['sqrt',['get','population']],70,2,1000,7],
                                                      9,['interpolate',['linear'],['sqrt',['get','population']],70,4,1000,12]],
        'circle-stroke-color':'#111','circle-stroke-width':1,'circle-opacity':0.92},
+     filter:['<=',['get','tier'],['zoom']],
      layout:{'circle-sort-key':['get','population']}});
    syncLayers();
  }
