@@ -73,3 +73,34 @@ def test_admin_areas_are_dropped_when_the_builder_says_so():
         ]
     ]
     assert got == ["Seattle"]
+
+
+def test_route_split_script_parses_as_javascript(tmp_path):
+    """The split script lives in a Python string, so a quote that Python
+    unescapes (``\\'`` inside ``\"\"\"``) ships as a JS syntax error and the page
+    silently loses its legend split and staggered reveal."""
+    import re
+    import shutil
+    import subprocess
+
+    import pytest
+
+    from osm_lz import world_publish as pub
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    js = "\n".join(re.findall(r"<script>(.*?)</script>", pub.SPLIT_JS, re.S))
+    f = tmp_path / "split.js"
+    f.write_text(js)
+    r = subprocess.run([node, "--check", str(f)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+
+
+def test_route_split_staggers_name_kind_one_zoom_later():
+    from osm_lz import world_publish as pub
+
+    js = pub.SPLIT_JS
+    assert "d.minzoom=z+1" in js  # name/kind copies start one zoom after the band
+    assert "setLayerZoomRange(id,z,24)" in js  # routed originals start at the band
+    assert "'ferry'" in js

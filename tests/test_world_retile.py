@@ -65,9 +65,12 @@ def test_split_injection_is_idempotent_and_sits_after_the_city_layer():
     assert html.index("<!-- /fw:route-split -->") < html.index("</body>")
 
 
-def test_both_halves_ticked_means_no_filter():
-    # the band must draw exactly as before when both boxes are ticked
-    assert "if(s.r&&s.o)return null" in pub.SPLIT_JS
+def test_both_halves_together_cover_the_band():
+    # Both boxes ticked draws every edge of the band (past the stagger zoom):
+    # the two halves are complementary filters on `routed`, so no edge is in
+    # neither -- a road with routed absent falls in name/kind, not nowhere.
+    assert "ROUTED=['==',['get','routed'],true]" in pub.SPLIT_JS
+    assert "OTHER=['!=',['get','routed'],true]" in pub.SPLIT_JS
 
 
 @pytest.mark.skipif(shutil.which("tippecanoe") is None, reason="needs tippecanoe")

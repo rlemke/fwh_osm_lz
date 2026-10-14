@@ -239,14 +239,27 @@ def inject_cities(html: str, built: str | None = None) -> str:
 
 # --- routed vs name/kind -----------------------------------------------------
 #
-# Each zoom band's legend row becomes two checkboxes. "routed" = edges sampled
-# routes rode at the zoom the edge was revealed at (the `routed` attribute
-# osm_geocoder's zoom export writes); "name/kind" = everything else -- admitted
-# by class, the motorway/trunk skeleton, backbone repair, the sparse-cell top-up,
-# or as part of a corridor whose other edges were routed. Both ticked = no
-# filter, i.e. the band exactly as it drew before. The band's own label still
-# toggles both. Only injected when every band's tiles carry the attribute: on
-# tiles without it, "routed" would silently show nothing.
+# Each zoom band's legend row becomes two checkboxes. "routed" = edges this
+# band's sampled routes rode (the `routed` attribute osm_geocoder's zoom export
+# writes); "name/kind" = everything else -- admitted by class, the motorway/trunk
+# skeleton, backbone repair, the sparse-cell top-up, or as part of a corridor
+# whose other edges were routed. The band's own label toggles both. Only
+# injected when every band's tiles carry the attribute: on tiles without it,
+# "routed" would silently show nothing.
+#
+# STAGGERED REVEAL: a band's routed roads appear at the band's zoom, its
+# name/kind roads one zoom LATER. Drawing both at once made each zoom step add
+# two layers of density together (measured on the US z2-z4 map: z3 and z4
+# each roughly doubled on their first frame). Staggered, density rises one
+# step per zoom: z2 routes, z3 + z2's named roads and z3's routes, z4 + z3's
+# named roads and z4's routes, ... and the last band's named roads at its
+# zoom + 1. Each band is split into two MapLibre layers at load (the routed
+# originals, filtered and zoom-gated, plus "-o" copies for name/kind) rather
+# than one zoom-dependent filter, because a layer's minzoom is honoured by
+# every MapLibre version while ["zoom"] inside a filter is not.
+#
+# Car ferries (fc "ferry") are drawn in blue so a crossing reads as a ferry,
+# not as a road laid across the water.
 
 _SPLIT_BEGIN = "<!-- fw:route-split -->"
 _SPLIT_END = "<!-- /fw:route-split -->"
@@ -261,19 +274,33 @@ SPLIT_JS = """<!-- fw:route-split -->
 <script>
 (function(){
  var st={};
- var PARTS=[['r','routed','sampled routes between cities rode this road at this zoom'],
-            ['o','name/kind','admitted by road class or name: motorway/trunk skeleton, class score, backbone repair, rural top-up, or the rest of a routed corridor']];
- function filt(s){if(s.r&&s.o)return null;return s.r?['==',['get','routed'],true]:['!=',['get','routed'],true];}
+ var FERRY='#4aa3df';
+ var PARTS=[['r','routed','sampled routes between cities rode this road; shown from the band zoom'],
+            ['o','name/kind','admitted by road class or name: motorway/trunk skeleton, class score, backbone repair, rural top-up, or the rest of a routed corridor; shown from one zoom after the band zoom']];
+ var ROUTED=['==',['get','routed'],true],OTHER=['!=',['get','routed'],true];
+ function styleLayer(id){var ls=(map.getStyle()||{}).layers||[];
+   for(var i=0;i<ls.length;i++)if(ls[i].id===id)return ls[i];return null;}
+ // Split one band into routed (its own layers, gated at the band zoom) and
+ // name/kind ("-o" copies, gated one zoom later). Idempotent: a style reload
+ // drops the copies, and the next apply puts them back.
+ function ensure(src){var ids=LAYER_IDS[src]||[];
+   if(!ids.length||!map.getLayer(ids[0])||map.getLayer(ids[0]+'-o'))return;
+   var m=/_z([0-9]+)$/.exec(styleLayer(ids[0])['source-layer']||'');
+   var z=m?+m[1]:0;
+   ids.forEach(function(id){var d=JSON.parse(JSON.stringify(styleLayer(id)));
+     d.id=id+'-o';d.filter=OTHER;d.minzoom=z+1;
+     if(!/-casing$/.test(id)&&d.paint)d.paint['line-color']=['case',['==',['get','fc'],'ferry'],FERRY,d.paint['line-color']];
+     map.addLayer(d,ids[0]);});
+   ids.forEach(function(id){map.setFilter(id,ROUTED);map.setLayerZoomRange(id,z,24);
+     if(!/-casing$/.test(id)){var c=map.getPaintProperty(id,'line-color');
+       if(!Array.isArray(c))map.setPaintProperty(id,'line-color',['case',['==',['get','fc'],'ferry'],FERRY,c]);}});}
  // Set only what differs. Every set fires 'styledata', and the page re-applies
- // the legend ON 'styledata' -- so an unconditional setFilter(null) on a layer
- // whose filter is undefined (MapLibre does not count those equal) re-fires it
- // forever: the style never finishes loading and no road is ever drawn.
- function applyBand(src){var s=st[src];(LAYER_IDS[src]||[]).forEach(function(id){
-   if(!map.getLayer(id))return;
-   var v=(s.r||s.o)?'visible':'none';
-   if((map.getLayoutProperty(id,'visibility')||'visible')!==v)map.setLayoutProperty(id,'visibility',v);
-   var f=filt(s);
-   if(JSON.stringify(map.getFilter(id)||null)!==JSON.stringify(f))map.setFilter(id,f);});}
+ // the legend ON 'styledata' -- so an unconditional set re-fires it forever:
+ // the style never finishes loading and no road is ever drawn.
+ function vis(id,on){if(!map.getLayer(id))return;var v=on?'visible':'none';
+   if((map.getLayoutProperty(id,'visibility')||'visible')!==v)map.setLayoutProperty(id,'visibility',v);}
+ function applyBand(src){var s=st[src];ensure(src);(LAYER_IDS[src]||[]).forEach(function(id){
+   vis(id,s.r);vis(id+'-o',s.o);});}
  var orig=applyLayer;
  applyLayer=function(src,on){
    var m=/^(.*):(r|o)$/.exec(src);
@@ -417,7 +444,9 @@ def publish(
             "<li>Each zoom band splits into <b>routed</b> (roads sampled routes rode at "
             "that zoom) and <b>name/kind</b> (admitted by class or name: the "
             "motorway/trunk skeleton, class score, backbone repair, rural top-up, or "
-            "the rest of a routed corridor). Both ticked is the full band.</li>"
+            "the rest of a routed corridor). Density rises one step per zoom: a "
+            "band's routed roads appear at its zoom, its name/kind roads one zoom "
+            "later. Car ferries are drawn in blue.</li>"
         )
     panel = (
         PANEL.replace("__TITLE__", f"{title} low-zoom road network")
