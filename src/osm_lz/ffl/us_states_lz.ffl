@@ -108,12 +108,17 @@ namespace continental.lz.states {
         nodes) -- the full country does not fit the zoom builder -- so only the
         bands those classes carry are routed and tiled. Same contract as
         BuildStateLowZoomMap otherwise: the graphhopper role must already be
-        serving this region. */
+        serving this region.
+
+        `output_base` is RELATIVE, so the layers land in the shared output
+        store and the tile steps can run on any host. A host-local base
+        ("/scratch/...") strands them on the builder: on 2026-10-13 the US
+        tile steps were claimed by two other hosts and could not read them. */
     workflow BuildCountryLowZoomMap(
         region: String,
         slug: String,
         label: String,
-        output_base: String = "/scratch/output/lz-country",
+        output_base: String = "lz-country",
         min_population: Long = 50000,
         profile: String = "car",
         basemap: String = "dark",
