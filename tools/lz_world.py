@@ -712,20 +712,33 @@ def main() -> int:
     log(f"world low-zoom run: {', '.join(order)} (max {a.max_mb:,.0f} MB per map)")
     # Routers a killed driver left behind still hold slots: a kill skips the
     # per-map clean-up, so drop every router for a region this driver owns.
-    # NOT a map whose run is still in flight: the driver adopts that run below,
+    # NOT a map whose run is still in flight: that run is adopted first (below),
     # and pulling its router mid-run would fail it.
+    live = {
+        k
+        for k, r in led.items()
+        if r.get("map_state") == "running"
+        and r.get("map_runner")
+        and run_state(r["map_runner"]) not in ("completed", "failed", "terminated", "?")
+    }
     for d in db().fleet_routers.find({}, {"region": 1}):
-        rec = led.get(d.get("region"))
-        if rec is None:
+        if d.get("region") not in led:
             continue
-        rid = rec.get("map_runner")
-        if rec.get("map_state") == "running" and rid and run_state(rid) not in (
-            "completed", "failed", "terminated", "?"
-        ):
+        if d["region"] in live:
             log(f"  keeping the router of a map still in flight: {d['region']}")
             continue
         log(f"  removing a router left from an earlier run: {d['region']}")
         region_router_down(d["region"])
+    # Finish the maps still in flight BEFORE the plan resumes at its first
+    # continent. Measured 2026-10-15: three Brazil maps kept their routers (5 of
+    # 8 slots) while the driver started over at Central America, whose routers
+    # could then never be placed -- every new map waited out its 45 min timeout.
+    if live:
+        nodes = build_plan(s3c, order, a.max_mb, led)
+        adopt = [nodes[k] for k in sorted(live) if k in nodes]
+        log(f"  finishing {len(adopt)} map(s) still in flight first: "
+            + ", ".join(n.key for n in adopt))
+        _map_batch(s3c, "in-flight", adopt, nodes, led, a.max_mb, order)
     for cont in order:
         log(f"=== {cont} ===")
         run_continent(s3c, cont, order, a.max_mb, led)
