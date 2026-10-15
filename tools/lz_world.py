@@ -84,6 +84,12 @@ ROUTER_REPLICAS = int(os.environ.get("FW_LZ_ROUTER_REPLICAS", "2"))
 
 _ledger_lock = threading.Lock()
 
+#: Regions mapped whole although just over --max-mb: cutting them would give a
+#: worse map for no memory reason (448 MB built fine whole).
+MAP_WHOLE = {
+    "africa/madagascar": "417 MB, one island: mapped whole (as in the first pass)",
+}
+
 
 def log(msg: str) -> None:
     print(f"[{datetime.now(UTC):%Y-%m-%d %H:%M:%S}Z] {msg}", flush=True)
@@ -235,15 +241,38 @@ def extract_sizes(s3c, continents: list[str]) -> dict[str, int]:
     return sizes
 
 
+#: page meta key -> (LastModified, carries the route split)
+_split_memo: dict[str, tuple[object, bool]] = {}
+
+
 def finished_maps(s3c) -> set[str]:
+    """Regions whose published map is CURRENT: its page carries the per-band
+    routed / name-kind split (``route_split`` in the page meta), which needs
+    tiles with the ``routed`` attribute.
+
+    ⚠️ "A page exists" is not enough. The 302 maps of the first world pass
+    (2026-10-02..05) predate ``routed``, so they draw no split and no city
+    dots, and only a rebuild can add either. Counting them done would leave
+    them like that for good. Meta reads are memoised per LastModified, so a
+    re-plan costs one listing."""
     done = set()
     for page in s3c.get_paginator("list_objects_v2").paginate(
         Bucket=MAPS_BUCKET, Prefix=pub.LZ_PREFIX
     ):
         for o in page.get("Contents", []):
             k = o["Key"]
-            if k.endswith("/index.html"):
-                done.add(k[len(pub.LZ_PREFIX) : -len("/index.html")])
+            if not k.endswith("/index.html.meta.json"):
+                continue
+            hit = _split_memo.get(k)
+            if hit is None or hit[0] != o["LastModified"]:
+                try:
+                    meta = json.loads(s3c.get_object(Bucket=MAPS_BUCKET, Key=k)["Body"].read())
+                    ok = bool((meta.get("extra") or {}).get("route_split"))
+                except Exception:  # noqa: BLE001 - unreadable meta: rebuild it
+                    ok = False
+                hit = _split_memo[k] = (o["LastModified"], ok)
+            if hit[1]:
+                done.add(k[len(pub.LZ_PREFIX) : -len("/index.html.meta.json")])
     return done
 
 
@@ -510,6 +539,7 @@ def build_plan(s3c, order, max_mb, led):
         if r.get("cut_state") in ("completed", "failed")
         and not any(s.startswith(k + "/") for s in sizes)
     }
+    force.update(MAP_WHOLE)
     return wp.plan(sizes, max_mb=max_mb, done=done, force=force, continents=order)
 
 
@@ -523,7 +553,9 @@ def run_continent(s3c, cont, order, max_mb, led) -> None:
     todo = [
         n
         for n in wp.leaves(nodes, cont)
-        if not n.reused and led.get(n.key, {}).get("map_state") != "completed"
+        # The store decides (finished_maps), not the ledger: a map the ledger
+        # calls completed may be a first-pass map without the route split.
+        if not n.reused
     ]
     log(
         f"  {cont}: {len(todo)} map(s) to build, est "
@@ -680,10 +712,20 @@ def main() -> int:
     log(f"world low-zoom run: {', '.join(order)} (max {a.max_mb:,.0f} MB per map)")
     # Routers a killed driver left behind still hold slots: a kill skips the
     # per-map clean-up, so drop every router for a region this driver owns.
+    # NOT a map whose run is still in flight: the driver adopts that run below,
+    # and pulling its router mid-run would fail it.
     for d in db().fleet_routers.find({}, {"region": 1}):
-        if d.get("region") in led:
-            log(f"  removing a router left from an earlier run: {d['region']}")
-            region_router_down(d["region"])
+        rec = led.get(d.get("region"))
+        if rec is None:
+            continue
+        rid = rec.get("map_runner")
+        if rec.get("map_state") == "running" and rid and run_state(rid) not in (
+            "completed", "failed", "terminated", "?"
+        ):
+            log(f"  keeping the router of a map still in flight: {d['region']}")
+            continue
+        log(f"  removing a router left from an earlier run: {d['region']}")
+        region_router_down(d["region"])
     for cont in order:
         log(f"=== {cont} ===")
         run_continent(s3c, cont, order, a.max_mb, led)
