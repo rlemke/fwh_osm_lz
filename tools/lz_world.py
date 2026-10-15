@@ -114,16 +114,22 @@ def s3():
     )
 
 
+_DB = None
+_DB_LOCK = threading.Lock()
+
+
 def db():
     """ONE client for the driver's lifetime. This built a new MongoClient per
     call -- every 30 s while a map ran -- and never closed any; each holds
     sockets and monitor threads, so after ~20 h the driver died with "Too many
-    open files" (2026-10-03, mid-Africa)."""
+    open files" (2026-10-03, mid-Africa). Locked: the map threads call it at
+    once."""
     global _DB
-    if _DB is None:
-        from pymongo import MongoClient
+    with _DB_LOCK:
+        if _DB is None:
+            from pymongo import MongoClient
 
-        _DB = MongoClient(mongo_url(), serverSelectionTimeoutMS=15000).facetwork
+            _DB = MongoClient(mongo_url(), serverSelectionTimeoutMS=15000).facetwork
     return _DB
 
 
@@ -672,6 +678,12 @@ def main() -> int:
                 print(f"    cut {n.key} ({n.mb:,.0f} MB) at admin_level {wp.cut_level(n.key)}")
         return 0
     log(f"world low-zoom run: {', '.join(order)} (max {a.max_mb:,.0f} MB per map)")
+    # Routers a killed driver left behind still hold slots: a kill skips the
+    # per-map clean-up, so drop every router for a region this driver owns.
+    for d in db().fleet_routers.find({}, {"region": 1}):
+        if d.get("region") in led:
+            log(f"  removing a router left from an earlier run: {d['region']}")
+            region_router_down(d["region"])
     for cont in order:
         log(f"=== {cont} ===")
         run_continent(s3c, cont, order, a.max_mb, led)
