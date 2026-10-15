@@ -45,6 +45,7 @@ SKIP: dict[str, str] = {
     "australia-oceania/kiribati-west": "covered by australia-oceania/kiribati",
     "australia-oceania/micronesia": "same as australia-oceania/federated-states-of-micronesia",
     "australia-oceania/pitcairn": "same as australia-oceania/pitcairn-islands",
+    "australia-oceania/tokelau": "no roads to map (2026-10-05: every zoom layer was empty)",
     "central-america/mexico": "mapped under north-america/mexico",
     "central-america/usa-virgin-islands": "same as central-america/united-states-virgin-islands",
     "central-america/caribbean": "an overlapping multi-island extract",
@@ -55,6 +56,10 @@ SKIP: dict[str, str] = {
     "north-america/us-northeast": "mapped as the US states (north-america/us)",
     "north-america/us-south": "mapped as the US states (north-america/us)",
     "north-america/us-west": "mapped as the US states (north-america/us)",
+    "north-america/us-major-roads": (
+        "a routing extract (lower 48, motorway..secondary only) for the one-graph US "
+        "map at north-america/us-z2-z4, not a region"
+    ),
     "south-america/falkland": "same as south-america/falkland-islands",
 }
 

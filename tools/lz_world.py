@@ -9,13 +9,16 @@ Per continent, in order:
 
 1. **cut** the sub-regions a too-big region needs (a few at a time, on the fleet);
 2. **graphs** -- build every leaf's routing graph (parallel across the fleet);
-3. **maps** -- ONE region at a time, because graphhopper-web serves exactly one
-   region: repoint the ``graphhopper`` role, wait until EVERY router host is
-   serving the new region, run ``BuildStateLowZoomMap``, publish the viewer into
-   the gallery's world tree (``cache/osm/maps/lz/<key>/``).
+3. **maps** -- up to ``FW_LZ_MAPS_IN_FLIGHT`` (4) at once. graphhopper-web
+   serves exactly one region, so each map gets its OWN region router
+   (``fw fleet router add``, placed by the fleet-agents; the handlers find it by
+   region), waits for it, runs ``BuildStateLowZoomMap``, publishes the viewer
+   into the gallery's world tree (``cache/osm/maps/lz/<key>/``) and removes the
+   router. Until 2026-10-15 this was one map at a time behind the single
+   fleet-wide router, repointed for every map.
 
 Everything is a submitted WORKFLOW; this only sequences them, which no FFL can
-express because the router is fleet configuration, not a step.
+express because a router is fleet configuration, not a step.
 
 Resumable: progress is in a ledger (``$FW_LZ_STATE_DIR``, default
 ``~/.facetwork/lz-world``) and a finished map is detected in the store, so the
@@ -32,11 +35,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
+import threading
 import time
-import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -56,7 +61,6 @@ LEDGER = STATE_DIR / "ledger.json"
 MAPS_BUCKET = os.environ.get("FW_MAPS_BUCKET", "afl-cache")
 EXTRACTS_BUCKET = os.environ.get("FW_OSM_EXTRACT_BUCKET", "osm-extracts")
 ROUTER_GROUP = os.environ.get("FW_LZ_ROUTER_GROUP", "heavy")
-ROUTER_PORT = int(os.environ.get("FW_GRAPHHOPPER_PORT", "8989"))
 PROFILE = "car"
 #: Where each map's zoom layers are written. Must be SHARED storage: the layers
 #: are built on one host and tiled by steps any host may claim (2026-10-02: a
@@ -69,6 +73,16 @@ GRAPH_TIMEOUT = 10 * 3600
 CUTS_IN_FLIGHT = 2
 GRAPH_WIDTH = 3
 GRAPH_CHUNK = 40
+#: Maps built at once. Each has its OWN region router (``fw fleet router``), so
+#: maps no longer queue behind one fleet-wide router being repointed (1-3 min
+#: per map, ~2.5 h of the remaining world in router switches alone). Bounded by
+#: router slots: heavy hosts x 2 per host, at ROUTER_REPLICAS per map.
+MAPS_IN_FLIGHT = int(os.environ.get("FW_LZ_MAPS_IN_FLIGHT", "4"))
+#: Two replicas: a router on a Docker Desktop Mac answers only its own host's
+#: runners, so a single replica placed there would strand a map built elsewhere.
+ROUTER_REPLICAS = int(os.environ.get("FW_LZ_ROUTER_REPLICAS", "2"))
+
+_ledger_lock = threading.Lock()
 
 
 def log(msg: str) -> None:
@@ -100,21 +114,6 @@ def s3():
     )
 
 
-def router_hosts() -> list[tuple[str, str]]:
-    """(name, address) of every host that runs the graphhopper role."""
-    cat = _catalog()
-    out = []
-    for srv in cat.servers():
-        if srv.get("group") == ROUTER_GROUP:
-            ip = cat.resolve_ip(srv)
-            if ip:
-                out.append((cat.host_key(srv.get("name")), ip))
-    return out
-
-
-_DB = None
-
-
 def db():
     """ONE client for the driver's lifetime. This built a new MongoClient per
     call -- every 30 s while a map ran -- and never closed any; each holds
@@ -138,7 +137,29 @@ def ledger_read() -> dict:
         return {}
 
 
+def _settled(fn, *a) -> None:
+    """Run ``fn`` under the ledger lock, retrying when another map's thread
+    changed a ledger record mid-serialisation (they update their own records
+    without the lock; only the WRITES are serialised)."""
+    with _ledger_lock:
+        for attempt in range(5):
+            try:
+                return fn(*a)
+            except RuntimeError as e:
+                if "changed size" not in str(e) or attempt == 4:
+                    raise
+                time.sleep(0.05)
+
+
 def ledger_write(d: dict) -> None:
+    _settled(_ledger_write, d)
+
+
+def status_write(s3c, nodes, led, max_mb, order) -> None:
+    _settled(write_status, s3c, nodes, led, max_mb, order)
+
+
+def _ledger_write(d: dict) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     tmp = LEDGER.with_suffix(".tmp")
     tmp.write_text(json.dumps(d, indent=1, sort_keys=True))
@@ -374,102 +395,38 @@ def _find(node, wanted: tuple[str, ...]) -> dict:
 # --- the router ----------------------------------------------------------------
 
 
-def _info(ip: str) -> dict | None:
-    try:
-        with urllib.request.urlopen(f"http://{ip}:{ROUTER_PORT}/info", timeout=8) as f:
-            return json.load(f)
-    except Exception:  # noqa: BLE001 - "not serving" is the answer
-        return None
+def router_heap(mb: float) -> str:
+    """JVM heap for a region's router: ~6 GB served the 448 MB US major-roads
+    graph; small countries need the 1 GB floor."""
+    return f"{min(6, max(1, math.ceil(mb / 80) + 1))}g"
 
 
-def current_router_region() -> str:
-    r = subprocess.run(
-        [str(FW_ROOT / "fw"), "fleet", "get", "--mongo", mongo_url()],
+def _fleet_router(*args: str, timeout: float = 120) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [str(FW_ROOT / "fw"), "fleet", "router", "--mongo", mongo_url(), *args],
         capture_output=True,
         text=True,
         cwd=FW_ROOT,
-    )
-    for line in r.stdout.splitlines():
-        if "role graphhopper:" in line and "region=" in line:
-            return line.split("region=", 1)[1].split()[0]
-    return ""
-
-
-#: How long a router host may stay entirely SILENT before it is reported as
-#: unverifiable from here rather than waited for. Measured 2026-10-02: one host
-#: (a laptop on Docker Desktop) served the region correctly to its own runners
-#: but returned "empty reply" to LAN probes, so every switch would have sat out
-#: the full timeout. Silence is not staleness: a host that ANSWERS with the old
-#: region is still waited for, because that is the failure this guards against.
-SILENT_GRACE_S = 5 * 60
-#: A host that was silent on the previous switch gets only this long on the
-#: next one: at ~600 maps, a full grace per switch would add ~50 h of waiting
-#: for a host that has never once answered. It is re-probed every switch, so a
-#: host that starts answering is waited for again.
-KNOWN_SILENT_GRACE_S = 45
-_known_silent: set[str] = set()
-
-
-def point_router_at(key: str) -> None:
-    """Repoint the graphhopper role and wait until every router host serves ``key``.
-
-    "Serving" is measured, not assumed: each host's /info must answer with a
-    bbox different from what it served before the switch. A healthy server still
-    holding the previous region is exactly the failure this sequence exists to
-    prevent (it 400s every pair, and the map comes out hollow).
-    """
-    hosts = router_hosts()
-    if current_router_region() == key:
-        up = [n for n, ip in hosts if (_info(ip) or {}).get("bbox")]
-        if up:
-            log(f"    router already serving {key} ({len(up)} host(s) answering)")
-            return
-    before = {name: (_info(ip) or {}).get("bbox") for name, ip in hosts}
-    r = subprocess.run(
-        [str(FW_ROOT / "fw"), "fleet", "set", "--mongo", mongo_url(), "--graphhopper-region", key],
-        capture_output=True,
-        text=True,
-        cwd=FW_ROOT,
-    )
-    if r.returncode != 0:
-        raise RuntimeError(f"fleet set failed: {r.stdout[-600:]} {r.stderr[-600:]}")
-    t0 = time.time()
-    deadline = t0 + ROUTER_READY_TIMEOUT
-    ready: set[str] = set()
-    answered: set[str] = set()
-    while time.time() < deadline:
-        for name, ip in hosts:
-            if name in ready:
-                continue
-            info = _info(ip)
-            if info:
-                answered.add(name)
-            if info and info.get("bbox") and info["bbox"] != before[name]:
-                ready.add(name)
-        if len(ready) == len(hosts):
-            _known_silent.clear()
-            log(f"    router serving {key} on {len(ready)} host(s)")
-            return
-        silent = [n for n, _ in hosts if n not in ready and n not in answered]
-        grace = KNOWN_SILENT_GRACE_S if silent and set(silent) <= _known_silent else SILENT_GRACE_S
-        if ready and time.time() - t0 > grace and len(ready) + len(silent) == len(hosts):
-            _known_silent.clear()
-            _known_silent.update(silent)
-            log(
-                f"    router serving {key} on {len(ready)} host(s); not verifiable from "
-                f"here (no answer at all): {', '.join(silent)}"
-            )
-            return
-        time.sleep(15)
-    if ready:
-        log(f"    WARNING router serving {key} on {len(ready)} of {len(hosts)} host(s) only")
-        return
-    raise RuntimeError(
-        f"no router host came up serving {key} within {ROUTER_READY_TIMEOUT // 60} min"
+        timeout=timeout,
     )
 
 
-# --- phases ----------------------------------------------------------------------
+def region_router_up(key: str, mb: float) -> None:
+    """Ask the fleet for a router serving ``key`` and wait until one is ready."""
+    r = _fleet_router("add", key, "--heap", router_heap(mb),
+                      "--replicas", str(ROUTER_REPLICAS), "--groups", ROUTER_GROUP)
+    if r.returncode:
+        raise RuntimeError(f"fleet router add {key} failed: {r.stdout[-400:]} {r.stderr[-400:]}")
+    r = _fleet_router("wait", key, "--timeout", str(ROUTER_READY_TIMEOUT),
+                      timeout=ROUTER_READY_TIMEOUT + 120)
+    if r.returncode:
+        raise RuntimeError(f"no router for {key} became ready: {r.stdout[-400:]} {r.stderr[-400:]}")
+
+
+def region_router_down(key: str) -> None:
+    r = _fleet_router("remove", key)
+    if r.returncode:
+        log(f"    WARNING fleet router remove {key} failed: {r.stdout[-200:]} {r.stderr[-200:]}")
 
 
 def cut_phase(s3c, cont: str, nodes, led) -> bool:
@@ -616,17 +573,27 @@ def _zoom_host(rid: str) -> str:
 
 
 def _map_batch(s3c, cont, todo, nodes, led, max_mb, order) -> None:
-    for i, n in enumerate(todo, 1):
+    """Build ``todo`` with up to MAPS_IN_FLIGHT maps at once, each on its own
+    region router."""
+    for n in todo:  # every record exists before any thread touches the ledger
+        led.setdefault(n.key, {})
+    with ThreadPoolExecutor(max_workers=max(1, MAPS_IN_FLIGHT)) as ex:
+        for f in [ex.submit(_build_one, s3c, cont, i, len(todo), n, nodes, led, max_mb, order)
+                  for i, n in enumerate(todo, 1)]:
+            f.result()
+
+
+def _build_one(s3c, cont, i, total, n, nodes, led, max_mb, order) -> None:
         rec = led.setdefault(n.key, {})
-        tag = f"[{cont} {i}/{len(todo)}] {n.key} ({n.mb:,.0f} MB)"
+        tag = f"[{cont} {i}/{total}] {n.key} ({n.mb:,.0f} MB)"
         if not has_graph(s3c, n.key):
             rec.update(graph_state="failed", error="no routing graph was built")
             ledger_write(led)
             log(f"{tag}: SKIPPED -- no routing graph")
-            continue
+            return
         log(f"{tag} est {wp.estimate_minutes(n.mb):.0f} min")
         try:
-            point_router_at(n.key)
+            region_router_up(n.key, n.mb)
             t0 = time.time()
             prior = rec.get("map_runner") if rec.get("map_state") == "running" else None
             if prior and run_state(prior) not in ("completed", "failed", "terminated", "?"):
@@ -649,7 +616,7 @@ def _map_batch(s3c, cont, todo, nodes, led, max_mb, order) -> None:
                 )
             rec.update(map_state="running", map_runner=rid)
             ledger_write(led)
-            write_status(s3c, nodes, led, max_mb, order)
+            status_write(s3c, nodes, led, max_mb, order)
             st, err = wait(rid, max(3 * 3600, 4 * 60 * wp.estimate_minutes(n.mb)))
             rec.update(map_state=st, error=err, map_minutes=round((time.time() - t0) / 60, 1))
             rec.setdefault("hosts", []).append(_zoom_host(rid))
@@ -670,12 +637,14 @@ def _map_batch(s3c, cont, todo, nodes, led, max_mb, order) -> None:
                 rec["edges"] = edges
                 if cities is not None:
                     rec["routed_cities"] = len(cities["features"])
-            log(f"  {st} in {rec['map_minutes']:.0f} min" + (f" -- {err}" if err else ""))
+            log(f"{tag}: {st} in {rec['map_minutes']:.0f} min" + (f" -- {err}" if err else ""))
         except Exception as e:  # noqa: BLE001 - one region must not stop the world
             rec.update(map_state="failed", error=f"driver: {e}"[:400])
-            log(f"  DRIVER ERROR: {e}")
+            log(f"{tag}: DRIVER ERROR: {e}")
+        finally:
+            region_router_down(n.key)
         ledger_write(led)
-        write_status(s3c, nodes, led, max_mb, order)
+        status_write(s3c, nodes, led, max_mb, order)
 
 
 def main() -> int:
