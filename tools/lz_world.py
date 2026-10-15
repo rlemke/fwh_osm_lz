@@ -83,6 +83,11 @@ MAPS_IN_FLIGHT = int(os.environ.get("FW_LZ_MAPS_IN_FLIGHT", "4"))
 ROUTER_REPLICAS = int(os.environ.get("FW_LZ_ROUTER_REPLICAS", "2"))
 
 _ledger_lock = threading.Lock()
+#: ONE limit for every map building, adopted or new: each holds
+#: ROUTER_REPLICAS router slots, so the total must stay within the fleet's.
+_map_slots = threading.Semaphore(MAPS_IN_FLIGHT)
+#: Regions being adopted from an earlier driver; the plan leaves them alone.
+_adopting: set[str] = set()
 
 #: Regions mapped whole although just over --max-mb: cutting them would give a
 #: worse map for no memory reason (448 MB built fine whole).
@@ -555,7 +560,7 @@ def run_continent(s3c, cont, order, max_mb, led) -> None:
         for n in wp.leaves(nodes, cont)
         # The store decides (finished_maps), not the ledger: a map the ledger
         # calls completed may be a first-pass map without the route split.
-        if not n.reused
+        if not n.reused and n.key not in _adopting
     ]
     log(
         f"  {cont}: {len(todo)} map(s) to build, est "
@@ -622,6 +627,11 @@ def _map_batch(s3c, cont, todo, nodes, led, max_mb, order) -> None:
 
 
 def _build_one(s3c, cont, i, total, n, nodes, led, max_mb, order) -> None:
+    with _map_slots:
+        _build_one_held(s3c, cont, i, total, n, nodes, led, max_mb, order)
+
+
+def _build_one_held(s3c, cont, i, total, n, nodes, led, max_mb, order) -> None:
         rec = led.setdefault(n.key, {})
         tag = f"[{cont} {i}/{total}] {n.key} ({n.mb:,.0f} MB)"
         if not has_graph(s3c, n.key):
@@ -729,19 +739,26 @@ def main() -> int:
             continue
         log(f"  removing a router left from an earlier run: {d['region']}")
         region_router_down(d["region"])
-    # Finish the maps still in flight BEFORE the plan resumes at its first
-    # continent. Measured 2026-10-15: three Brazil maps kept their routers (5 of
-    # 8 slots) while the driver started over at Central America, whose routers
-    # could then never be placed -- every new map waited out its 45 min timeout.
+    # Maps still in flight are adopted ALONGSIDE the plan, under the same
+    # MAPS_IN_FLIGHT limit (_map_slots). Measured 2026-10-15: kept routers held
+    # 5 of 8 slots while the plan started over at Central America, whose routers
+    # could then never be placed; and finishing them first instead left 3 of 4
+    # slots idle for hours behind one large map.
+    adopting = None
     if live:
         nodes = build_plan(s3c, order, a.max_mb, led)
         adopt = [nodes[k] for k in sorted(live) if k in nodes]
-        log(f"  finishing {len(adopt)} map(s) still in flight first: "
-            + ", ".join(n.key for n in adopt))
-        _map_batch(s3c, "in-flight", adopt, nodes, led, a.max_mb, order)
+        _adopting.update(n.key for n in adopt)
+        log(f"  adopting {len(adopt)} map(s) still in flight: " + ", ".join(n.key for n in adopt))
+        adopting = threading.Thread(
+            target=_map_batch, args=(s3c, "in-flight", adopt, nodes, led, a.max_mb, order)
+        )
+        adopting.start()
     for cont in order:
         log(f"=== {cont} ===")
         run_continent(s3c, cont, order, a.max_mb, led)
+    if adopting is not None:
+        adopting.join()
     log("world run finished")
     return 0
 
