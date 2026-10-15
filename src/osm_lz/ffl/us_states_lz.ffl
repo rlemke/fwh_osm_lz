@@ -106,9 +106,10 @@ namespace continental.lz.states {
         state lines (San Francisco - New York is a z2 pair). `region` is a
         MAJOR-ROADS extract (motorway..secondary + links + ferries + place
         nodes) -- the full country does not fit the zoom builder -- so only the
-        bands those classes carry are routed and tiled. Same contract as
-        BuildStateLowZoomMap otherwise: the graphhopper role must already be
-        serving this region.
+        bands those classes carry are routed and tiled. The city pairs are
+        routed as RouteZoomChunk tasks on any osm host, each through this
+        region's own router (`fw fleet router add <region>`) when one is ready,
+        else the fleet-wide graphhopper role, which must then be serving it.
 
         `output_base` is RELATIVE, so the layers land in the shared output
         store and the tile steps can run on any host. A host-local base
@@ -126,11 +127,29 @@ namespace continental.lz.states {
         route_max_zoom: Long = 4,
         // ~1 ms per routed km to match onto the graph: z4's default 50k pairs
         // at >1,000 km each is ~18 h at country scale; 8k is ~3 h.
-        max_pairs: Long = 8000
+        max_pairs: Long = 8000,
+        // Routing runs as separate tasks, `chunk_pairs` city pairs each, at
+        // most `route_width` at once across the fleet (0 = unbounded). On
+        // 2026-10-14 the US z2-z4 routing was 2 h 30 m as one task.
+        chunk_pairs: Long = 500,
+        route_width: Int = 8
     ) => (edges: Long, map_path: String, layer_dir: String) andThen {
         extract = osm.ops.CacheRegion(region = $.region)
 
         gh = osm.ops.GraphHopper.BuildGraph(cache = extract.cache, profile = $.profile)
+
+        plan = osm.Roads.ZoomBuilder.PlanZoomRouting(
+            cache = extract.cache,
+            graph = gh.graph,
+            output_dir = $.output_base ++ "/" ++ $.slug,
+            min_population = $.min_population,
+            route_max_zoom = $.route_max_zoom,
+            max_pairs = $.max_pairs,
+            chunk_pairs = $.chunk_pairs,
+            memory_gb = $.memory_gb
+        ) with Requires(memory_gb = "$.memory_gb")
+
+        routed = osm.Roads.ZoomBuilder.RouteZoomChunks(chunks = plan.chunks, width = $.route_width)
 
         lz = osm.Roads.ZoomBuilder.BuildZoomLayers(
             cache = extract.cache,
@@ -139,7 +158,8 @@ namespace continental.lz.states {
             output_dir = $.output_base ++ "/" ++ $.slug,
             memory_gb = $.memory_gb,
             route_max_zoom = $.route_max_zoom,
-            max_pairs = $.max_pairs
+            max_pairs = $.max_pairs,
+            chunk_votes = routed.votes
         ) with Requires(memory_gb = "$.memory_gb")
 
         t2 = osm.Tiles.BuildVectorTiles(geojson_path = lz.result.output_dir ++ "/roads_z2.geojson", layer_name = $.slug ++ "_roads_z2", min_zoom = 2, max_zoom = 14)
