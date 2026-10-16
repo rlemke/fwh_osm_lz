@@ -115,6 +115,7 @@ def mongo_url() -> str:
 
 def s3():
     import boto3
+    from botocore.config import Config
 
     ep = os.environ.get("FW_S3_ENDPOINT") or "http://afl-minio:9000"
     return boto3.client(
@@ -122,6 +123,16 @@ def s3():
         endpoint_url=_catalog().resolve_url(ep),
         aws_access_key_id=os.environ.get("FW_S3_ACCESS_KEY", "minioadmin"),
         aws_secret_access_key=os.environ.get("FW_S3_SECRET_KEY", "minioadmin"),
+        # botocore's 60 s read timeout x 5 attempts was not enough: on
+        # 2026-10-16 a planet split saturated the store's disk and LISTing
+        # osm-extracts/europe/ timed out every attempt, so the driver
+        # crash-looped at plan time. A slow store must slow the driver, not
+        # kill it; adaptive retries back off between attempts.
+        config=Config(
+            read_timeout=300,
+            connect_timeout=30,
+            retries={"max_attempts": 10, "mode": "adaptive"},
+        ),
     )
 
 
@@ -241,7 +252,10 @@ def extract_sizes(s3c, continents: list[str]) -> dict[str, int]:
         for page in pag.paginate(Bucket=EXTRACTS_BUCKET, Prefix=cont + "/"):
             for o in page.get("Contents", []):
                 k = o["Key"]
-                if k.endswith("-latest.osm.pbf"):
+                # `<region>/-latest.osm.pbf` is an extract with an EMPTY name (a
+                # non-Latin admin name that slugged to "", fixed in fwh_osm); it
+                # is never a region, so it must not become a map.
+                if k.endswith("-latest.osm.pbf") and not k.endswith("/-latest.osm.pbf"):
                     sizes[k[: -len("-latest.osm.pbf")]] = o["Size"]
     return sizes
 
