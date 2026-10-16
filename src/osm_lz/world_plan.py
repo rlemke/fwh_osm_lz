@@ -47,6 +47,7 @@ SKIP: dict[str, str] = {
     "australia-oceania/pitcairn": "same as australia-oceania/pitcairn-islands",
     "australia-oceania/tokelau": "no roads to map (2026-10-05: every zoom layer was empty)",
     "central-america/mexico": "mapped under north-america/mexico",
+    "south-america/south-georgia-and-south-sandwich": "no roads to map (2026-10-16: every zoom layer was empty)",
     "central-america/usa-virgin-islands": "same as central-america/united-states-virgin-islands",
     "central-america/caribbean": "an overlapping multi-island extract",
     "europe/czech-republic": "same country as europe/czechia",

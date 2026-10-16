@@ -643,10 +643,17 @@ def _build_one_held(s3c, cont, i, total, n, nodes, led, max_mb, order) -> None:
         try:
             region_router_up(n.key, n.mb)
             t0 = time.time()
-            prior = rec.get("map_runner") if rec.get("map_state") == "running" else None
+            # "timeout" too: the driver stopped WAITING, the workflow did not
+            # stop. A big map can sit pending for hours until a host has the
+            # free memory its floor asks for; resubmitting beside it would put
+            # two copies of the same build in the queue.
+            prior = (
+                rec.get("map_runner") if rec.get("map_state") in ("running", "timeout") else None
+            )
             if prior and run_state(prior) not in ("completed", "failed", "terminated", "?"):
-                # A driver restart while this region's map was building: adopt
-                # the live run rather than submit a duplicate beside it.
+                # A driver restart (or an earlier timeout) while this region's
+                # map was building: adopt the live run rather than submit a
+                # duplicate beside it.
                 rid = prior
                 log(f"    adopting the run already in flight ({rid[:8]})")
             else:
