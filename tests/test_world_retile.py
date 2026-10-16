@@ -99,3 +99,15 @@ def test_metadata_reader_sees_the_attribute_tippecanoe_wrote(tmp_path):
     meta = pub.pmtiles_metadata(lambda off, n: data[off : off + n])
     assert pub.tiles_fields(meta) == {"edge_id", "routed"}
     assert "tippecanoe" in meta["generator_options"]
+
+
+def test_basemap_zoom_injection_is_idempotent_and_keeps_z5_dark():
+    html = pub.inject_basemap_zoom(pub.inject_basemap_zoom(PAGE))
+    assert html.count("<!-- fw:basemap-zoom -->") == 1
+    assert html.index("<!-- /fw:basemap-zoom -->") < html.index("</body>")
+    # z5 keeps the page's darkened values; standard OSM (names) from z6
+    assert "Z0=5.5,Z1=6" in pub.BASEMAP_JS
+    assert "'raster-brightness-max':[0.45,1]" in pub.BASEMAP_JS
+    assert "'raster-saturation':[-0.85,0]" in pub.BASEMAP_JS
+    # re-applied on styledata, so it may only set what is not already a ramp
+    assert "if(!Array.isArray(map.getPaintProperty('bg',k)))" in pub.BASEMAP_JS

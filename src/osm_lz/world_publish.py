@@ -339,6 +339,50 @@ def inject_route_split(html: str) -> str:
     return _inject(html, _SPLIT_BEGIN, _SPLIT_END, SPLIT_JS)
 
 
+# --- named basemap from zoom 6 ---------------------------------------------
+#
+# The page's backdrop is the OpenStreetMap raster, darkened and greyed so the
+# z2-z5 bands read against it. From z6 the overlay is dense enough to stand on
+# the ordinary map, and the reader wants road NAMES and towns for orientation,
+# so the backdrop fades back to standard OSM between z5.5 and z6. Done at
+# runtime on the existing `bg` layer: same tile source, no second fetch, and it
+# works on pages rendered before this existed.
+#
+# Applied on 'load', on 'styledata' and on a short timer (the style can be
+# ready after its last styledata while 'load' still waits on tiles), so it
+# MUST set only what differs: every setPaintProperty fires
+# styledata again, and an unconditional set would loop (see SPLIT_JS). Once a
+# property holds the zoom ramp it is left alone.
+
+_BASEMAP_BEGIN = "<!-- fw:basemap-zoom -->"
+_BASEMAP_END = "<!-- /fw:basemap-zoom -->"
+
+BASEMAP_JS = """<!-- fw:basemap-zoom -->
+<script>
+(function(){
+ var Z0=5.5,Z1=6;
+ function ramp(a,b){return ['interpolate',['linear'],['zoom'],Z0,a,Z1,b];}
+ var P={'raster-brightness-max':[0.45,1],'raster-saturation':[-0.85,0],'raster-contrast':[0.15,0]};
+ // Not gated on isStyleLoaded(): that also waits for every source, i.e. the
+ // remote PMTiles headers. The bg layer is settable as soon as it exists.
+ function apply(){var l=map.getLayer('bg');if(!l)return false;
+   if(l.type!=='raster')return true;
+   try{for(var k in P)if(!Array.isArray(map.getPaintProperty('bg',k)))
+     map.setPaintProperty('bg',k,ramp(P[k][0],P[k][1]));}catch(e){return false;}
+   return true;}
+ map.on('load',apply);map.on('styledata',apply);
+ var n=0,t=setInterval(function(){if(apply()||++n>120)clearInterval(t);},250);
+})();
+</script>
+<!-- /fw:basemap-zoom -->
+"""
+
+
+def inject_basemap_zoom(html: str) -> str:
+    """Dark backdrop to z5, standard (named) OpenStreetMap from z6. Idempotent."""
+    return _inject(html, _BASEMAP_BEGIN, _BASEMAP_END, BASEMAP_JS)
+
+
 def pmtiles_metadata(read_range) -> dict:
     """A PMTiles v3 archive's JSON metadata, given ``read_range(offset, length)``.
 
@@ -440,6 +484,7 @@ def publish(
         )
     # Only the bands this page draws: a source prefix can also hold archives an
     # earlier run left under other names, which would never carry `routed`.
+    html = inject_basemap_zoom(html)
     split = bands_have_routed(s3, bucket, [b for b in bands if b.rsplit("/", 1)[-1] in html])
     if split:
         html = inject_route_split(html)
