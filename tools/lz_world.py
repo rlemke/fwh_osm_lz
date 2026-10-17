@@ -421,14 +421,32 @@ def run_error(rid: str) -> str:
     return ""
 
 
-def wait(rid: str, timeout: float) -> tuple[str, str]:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+#: How long to keep waiting on a map that is still RUNNING past its estimate.
+HARD_WAIT_S = float(os.environ.get("FW_LZ_HARD_WAIT_HOURS", "24")) * 3600
+
+
+def wait(rid: str, timeout: float, hard: float = HARD_WAIT_S) -> tuple[str, str]:
+    """Wait for a run to finish. ``timeout`` is the ESTIMATE-based budget; a run
+    still ``running`` past it is waited on until ``hard``.
+
+    Giving up at the estimate was not neutral: the caller then removed the
+    region's router while the build kept routing, so it fell back to the
+    fleet-wide router, which has no graph for the region, and failed "hollow".
+    Colombia (est 57 min, ~4 h real) failed that way three times, 2026-10-16/17.
+    """
+    t0 = time.time()
+    noted = False
+    while True:
         st = run_state(rid)
         if st in ("completed", "failed", "terminated"):
             return st, ("" if st == "completed" else run_error(rid))
+        el = time.time() - t0
+        if el >= hard or (el >= timeout and st != "running"):
+            return "timeout", f"still {st} after {el / 3600:.1f} h"
+        if el >= timeout and not noted:
+            log(f"    {rid[:8]} past its {timeout / 3600:.1f} h budget, still running -- waiting")
+            noted = True
         time.sleep(30)
-    return "timeout", f"still {run_state(rid)} after {timeout / 3600:.1f} h"
 
 
 def map_output(rid: str) -> tuple[str, int | None]:
@@ -745,7 +763,14 @@ def _build_one_held(s3c, cont, i, total, n, nodes, led, max_mb, order) -> None:
             rec.update(map_state="failed", error=f"driver: {e}"[:400])
             log(f"{tag}: DRIVER ERROR: {e}")
         finally:
-            region_router_down(n.key)
+            # Never pull the router from a build that may still be routing: a
+            # timed-out run is still in flight, and the next driver start
+            # adopts it (keeping its router) or removes the router once the
+            # run has finished.
+            if rec.get("map_state") != "timeout":
+                region_router_down(n.key)
+            else:
+                log(f"    keeping the router of {n.key}: its run is still in flight")
         ledger_write(led)
         status_write(s3c, nodes, led, max_mb, order)
 
