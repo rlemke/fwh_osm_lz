@@ -68,6 +68,10 @@ PROFILE = "car"
 OUTPUT_BASE = os.environ.get("FW_LZ_OUTPUT_BASE") or f"s3://{MAPS_BUCKET}/osm-output/lz-world"
 
 ROUTER_READY_TIMEOUT = 45 * 60
+#: Ceiling for an escalated map memory floor. The largest host advertises ~47 GB,
+#: but with its idle runners resident it never has that FREE; a floor above what
+#: any host can free strands the task (fw maint unsatisfiable reports STARVED).
+MAX_MEMORY_GB = int(os.environ.get("FW_LZ_MAX_MEMORY_GB", "40"))
 CUT_TIMEOUT = 8 * 3600
 GRAPH_TIMEOUT = 10 * 3600
 CUTS_IN_FLIGHT = 2
@@ -318,6 +322,31 @@ def routed_cities_for(s3c, key: str) -> dict | None:
     except Exception as e:  # noqa: BLE001 - dots are an overlay, not the map
         log(f"    no city dots for {key}: cannot read s3://{bucket}/{k}: {e}")
         return None
+
+
+def graph_mb(s3c, key: str) -> float:
+    """Size of a region's routing graph, MB -- the road-network term of the
+    memory floor (``world_plan.estimate_memory_gb``). 0 if unreadable."""
+    total = 0
+    try:
+        for page in s3c.get_paginator("list_objects_v2").paginate(
+            Bucket=MAPS_BUCKET, Prefix=f"cache/osm/graphhopper/{key}-latest/{PROFILE}/"
+        ):
+            total += sum(o["Size"] for o in page.get("Contents", []))
+    except Exception as e:  # noqa: BLE001 - the PBF model still applies
+        log(f"    WARNING could not size the graph for {key}: {e}")
+        return 0.0
+    return total / 1e6
+
+
+def map_memory_gb(s3c, n, rec: dict) -> int:
+    """The memory floor for this attempt: the size estimate, raised after a
+    failed attempt (almost always an OOM kill), never above MAX_MEMORY_GB."""
+    est = min(MAX_MEMORY_GB, wp.estimate_memory_gb(n.mb, graph_mb(s3c, n.key)))
+    prior = rec.get("memory_gb")
+    if rec.get("map_state") == "failed" and isinstance(prior, int):
+        return max(est, wp.escalate_memory_gb(prior, MAX_MEMORY_GB))
+    return est
 
 
 def has_graph(s3c, key: str) -> bool:
@@ -672,6 +701,11 @@ def _build_one_held(s3c, cont, i, total, n, nodes, led, max_mb, order) -> None:
                 log(f"    adopting the run already in flight ({rid[:8]})")
             else:
                 rec["attempts"] = rec.get("attempts", 0) + 1
+                floor = map_memory_gb(s3c, n, rec)
+                if floor != wp.estimate_memory_gb(n.mb):
+                    log(f"    memory floor {floor} GB (PBF-only estimate "
+                        f"{wp.estimate_memory_gb(n.mb)})")
+                rec["memory_gb"] = floor
                 rid = submit(
                     LZ_FFL,
                     "continental.lz.states.BuildStateLowZoomMap",
@@ -680,7 +714,7 @@ def _build_one_held(s3c, cont, i, total, n, nodes, led, max_mb, order) -> None:
                         "slug": wp.slug(n.key),
                         "label": wp.label(n.key),
                         "output_base": OUTPUT_BASE,
-                        "memory_gb": wp.estimate_memory_gb(n.mb),
+                        "memory_gb": floor,
                     },
                 )
             rec.update(map_state="running", map_runner=rid)

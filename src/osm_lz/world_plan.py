@@ -244,14 +244,41 @@ def estimate_minutes(mb: float) -> float:
     return 0.010 * max(mb, 1.0) ** 1.46
 
 
-def estimate_memory_gb(mb: float) -> int:
+def estimate_memory_gb(mb: float, graph_mb: float = 0.0) -> int:
     """Peak memory of a region's zoom-layer build, GB, rounded up with headroom.
 
-    Two measured points from the 2026-09 US batch: Washington 392 MB -> 10.6 GB,
-    California 1,449 MB -> 22-25 GB (OOM). Sub-linear: ~10.6 x (MB/392)^0.63.
     Used as a claim FLOOR, so it errs high -- a floor too low lets the step stack
     with other work and be OOM-killed; one too high only makes it wait.
+
+    Two size models, and the floor is the HIGHER:
+
+    * PBF size -- Washington 392 MB -> 10.6 GB, California 1,449 MB -> 22-25 GB
+      (OOM): ~10.6 x (MB/392)^0.63.
+    * Routing-graph size (the car graph built before the map) -- same two
+      points at 177 MB and 508 MB of graph: ~10.6 x (graph/177)^0.78.
+
+    The PBF alone under-predicts road-dense regions with few buildings: Minas
+    Gerais (279 MB PBF) got 11 and was OOM-killed five times at 11.8-15.7 GB,
+    while its graph (200 MB) is bigger than Washington's. Neither model sees
+    the city count (routing pairs; Minas Gerais has 606), so the driver also
+    escalates the floor after a failed attempt -- see ``escalate_memory_gb``.
     """
     import math
 
-    return max(2, math.ceil(10.6 * (max(mb, 1.0) / 392.0) ** 0.63 + 1.5))
+    by_pbf = 10.6 * (max(mb, 1.0) / 392.0) ** 0.63
+    by_graph = 10.6 * (graph_mb / 177.0) ** 0.78 if graph_mb > 0 else 0.0
+    return max(2, math.ceil(max(by_pbf, by_graph) + 1.5))
+
+
+def escalate_memory_gb(prior_gb: int, cap_gb: int) -> int:
+    """Floor for a retry after a FAILED map attempt: +35%, capped.
+
+    A failed zoom build is almost always an OOM kill (the runner goes silent,
+    the task is reclaimed, retries exhaust and it dead-letters -- no error
+    text). Retrying at the same floor repeats it. Only for ``failed``: a
+    ``timeout`` usually means the task sat waiting for free memory, and a
+    higher floor would make it wait longer.
+    """
+    import math
+
+    return min(cap_gb, max(prior_gb + 2, math.ceil(prior_gb * 1.35)))

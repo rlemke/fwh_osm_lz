@@ -75,3 +75,25 @@ def test_memory_floor_tracks_the_measured_build_peaks():
     assert estimate_memory_gb(392) == 13  # Washington peaked at 10.6 GB
     assert estimate_memory_gb(5) == 3  # small regions are cheap
     assert 2 <= estimate_memory_gb(0.1) <= 3
+
+
+def test_memory_floor_takes_the_road_graph_when_it_is_the_bigger_term():
+    """Minas Gerais: 279 MB PBF but a 200 MB graph (bigger than Washington's);
+    the PBF model gave 11 and it was OOM-killed at 11.8-15.7 GB."""
+    from osm_lz.world_plan import estimate_memory_gb
+
+    assert estimate_memory_gb(279) == 11
+    assert estimate_memory_gb(279, graph_mb=200.3) >= 14
+    # The graph model never LOWERS the floor (Uganda: 96 MB graph, big PBF).
+    assert estimate_memory_gb(400, graph_mb=96.5) == estimate_memory_gb(400)
+    # Both models agree at the calibration points.
+    assert abs(estimate_memory_gb(1449, graph_mb=507.6) - estimate_memory_gb(1449)) <= 2
+
+
+def test_failed_attempt_escalates_the_floor_up_to_the_cap():
+    from osm_lz.world_plan import escalate_memory_gb
+
+    assert escalate_memory_gb(11, 40) == 15
+    assert escalate_memory_gb(15, 40) == 21  # MG's 15.7 GB peak is now covered
+    assert escalate_memory_gb(4, 40) == 6  # small floors still move
+    assert escalate_memory_gb(36, 40) == 40
