@@ -24,6 +24,7 @@ per country).
 |------|----------------|
 | [continental-lz.md](continental-lz.md) | **Flagship.** Low-zoom (zoom 2–7) road tile layers for the US, Canada, and 12 European countries. Composes `osm.cache.*` → `osm.cache.GraphHopper.*` → `osm.Roads.ZoomBuilder.BuildZoomLayers`; per-country fan-out. |
 | [continental-transit.md](continental-transit.md) | GTFS transit analysis for 11 US/Canada/Europe agencies + regional/continental roll-ups. Composes `osm.Transit.GTFS.{DownloadFeed,TransitStatistics,ExtractStops,ExtractRoutes}`; per-agency fan-out. |
+| [state-and-world-lz.md](state-and-world-lz.md) | `continental.lz.states` — one region per run (state, country, sub-region) low-zoom maps, chunked country routing, re-tiling, and the `tools/lz_world.py` world run that drives them. |
 | [full-pipeline.md](full-pipeline.md) | `continental.FullContinentalPipeline` — the top-level bundle running the LZ orchestrator and the transit analysis in parallel. |
 
 ## Types & packaging

@@ -71,15 +71,18 @@ pipelines is covered in [continental-lz](continental-lz.md) and
 
 The `WorkflowInfo` dataclass (`qualified_name`, `description`, `primary: Path`,
 `inputs: dict[str,str]`) and the `catalog.yaml` workflow entries (`qualified_name`,
-`summary`, `tags`, `entry_point: true`, `param_schema`). The manifest lists **20
+`summary`, `tags`, `entry_point: true`, `param_schema`). The manifest lists **24
 workflows** (matching the FFL); `facets` is empty. `FFL_FILES` = the four
-`continental_*.ffl` files, resolved package-relative so editable and zip installs
+`continental_*.ffl` files (the two `us_states_*.ffl` files are not in it, so
+`submit.sh` cannot submit the `continental.lz.states` workflows), resolved package-relative so editable and zip installs
 behave identically.
 
 ## External libraries / binaries
 
 The whole package's declared runtime deps are just `facetwork>=0.31.0` and
-`PyYAML>=6.0` (`pyproject.toml`); `PyYAML` is used only to read `catalog.yaml`. Dev
+`PyYAML>=6.0` (`pyproject.toml`); `PyYAML` is used only to read `catalog.yaml`.
+The world-run tools (`tools/lz_world.py`, `tools/lz_merge.py`) also import `boto3`,
+which is not declared. Dev
 extras: `pytest`, `pytest-cov`, `ruff`. The CLAUDE.md code-review checklist forbids
 adding `pymongo`/`requests` here — submission shells out to the `facetwork-submit`
 binary rather than talking to Mongo directly. There are **no** handler/binary deps
@@ -87,9 +90,10 @@ binary rather than talking to Mongo directly. There are **no** handler/binary de
 
 ## Facets & workflows
 
-No facets. The 20 catalogued workflows are documented in
+No facets. The 24 catalogued workflows are documented in
 [continental-lz](continental-lz.md) (4), [continental-transit](continental-transit.md)
-(15), and [full-pipeline](full-pipeline.md) (1). This spec covers only how they are
+(15), [full-pipeline](full-pipeline.md) (1) and
+[state-and-world-lz](state-and-world-lz.md) (4). This spec covers only how they are
 registered, indexed, and submitted.
 
 ## Cache / output
@@ -103,10 +107,8 @@ covered in the per-pipeline specs.
 - **`facets: []` is intentional, not an omission.** A reviewer expecting a facet
   index here should look at fwh_osm's `osm_geocoder/catalog.yaml`.
 - **Entry-point group is `facetwork.domains`, key `osm-lz` → `osm_lz:domain`** (a
-  `DomainPackage`). Some prose in `README.md` / `USER_GUIDE.md` / `CLAUDE.md` still
-  refers to the older `facetwork.examples` / `ExamplePackage` and `--example osm-lz`
-  wording; the authoritative source is `pyproject.toml` + `__init__.py`, which use
-  the domain package API. Either way it registers **no handlers**.
+  `DomainPackage`); the authoritative source is `pyproject.toml` + `__init__.py`.
+  Either way it registers **no handlers**.
 - **Keep the two catalogs in sync when adding a workflow:** add the FFL declaration,
   a `WorkflowInfo` row in `tools/_lib/workflows.py`, and a `catalog.yaml` entry (the
   manifest test checks the leaf name exists in FFL; `list/submit` read the Python

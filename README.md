@@ -6,7 +6,8 @@ pipeline** and **GTFS transit analysis** across continental regions
 (US, Canada, Europe).
 
 This is a **pure FFL workflow catalog** — it contributes 0 Python
-handlers. The handlers it composes
+handlers (the Python here plans, merges and publishes the world low-zoom run;
+it registers nothing). The handlers it composes
 (`osm.cache.<continent>.<country>`, `osm.cache.GraphHopper.<continent>.<country>`,
 `osm.Roads.ZoomBuilder.*`, `osm.Transit.GTFS.*`) live in the sibling
 [fwh_osm](https://github.com/rlemke/fwh_osm) package.
@@ -133,6 +134,40 @@ ships, so you don't have to list `--library` flags by hand.
 | `continental.lz.BuildEuropeLowZoom` | LZ pipeline for the 12 European regions |
 | `continental.transit.ContinentalTransitAnalysis` | Bundle: every GTFS agency below |
 | `continental.transit.Analyze{Amtrak,MBTA,CTA,MTA,…}` | Per-agency GTFS feeds (11 agencies) |
+| `continental.lz.states.BuildStateGraphs` | Build (or reuse) the routing graphs for a list of region extracts, serially by default |
+| `continental.lz.states.BuildStateLowZoomMap` | ONE region's graded low-zoom map (z2–z7 tilesets + viewer); the router must already serve that region |
+| `continental.lz.states.BuildCountryLowZoomMap` | A country's top bands (z2–z4) routed over one major-roads graph, city pairs routed as chunk tasks |
+| `continental.lz.states.RetileStateMap` | Rebuild a region's tiles + viewer from its existing layer files, no re-routing |
+
+The `continental.lz.states` workflows run **one region per run**: the low-zoom
+builder scores roads by routing city pairs, and a GraphHopper server holds one
+region. They are what the world run below drives. `submit.sh` /
+`list-workflows.sh` know only the continental workflows (their catalog lists the
+four `continental_*.ffl` files); submit the `states` workflows from the
+dashboard or with `fw ffl run`.
+
+## World low-zoom run (`tools/lz_world.py`)
+
+`tools/lz_world.py` drives a low-zoom map per country for the whole world,
+continent by continent: a country at or under `--max-mb` (400) is one map, a
+bigger one is split into its sub-regions (cut first with
+`osm.planet.BuildAdminSetWorkflow` where the store has none). Per continent it
+cuts, builds every leaf's graph, then builds up to `FW_LZ_MAPS_IN_FLIGHT` (4) maps
+at once, each behind its own region router (`fw fleet router add`), and publishes
+each viewer into the gallery's world tree (`cache/osm/maps/lz/<key>/`). It only
+sequences submitted workflows — a router is fleet configuration, which no FFL step
+can express. Progress is in a ledger under `FW_LZ_STATE_DIR`
+(default `~/.facetwork/lz-world`), so the driver can be killed and restarted.
+
+```bash
+python tools/lz_world.py --dry                       # the plan, with estimates
+python tools/lz_world.py --continents central-america
+```
+
+`tools/lz_merge.py` merges finished region maps into one map (e.g. every US state)
+without re-routing: importance stays per region and routes stop at region borders,
+and the merged page says so. The planning, merge, publish and re-tile logic live in
+`src/osm_lz/world_{plan,merge,publish,retile}.py`, with tests under `tests/`.
 
 The internal FFL namespaces (`continental.lz`, `continental.transit`,
 `continental.types`, `continental`) describe the multi-region scope of
@@ -174,9 +209,12 @@ fwh_osm_lz/
 ├── CLAUDE.md
 ├── USER_GUIDE.md
 ├── agent-spec/
+├── tools/                         # lz_world.py (world run driver), lz_merge.py
 └── src/osm_lz/
     ├── __init__.py                # exports `domain: DomainPackage` (no-op register_handlers)
-    ├── ffl/                       # 4 FFL files: types, lz workflows, gtfs workflows, full pipeline
+    ├── catalog.yaml / catalog.py  # composability manifest (workflows by intent)
+    ├── world_{plan,merge,publish,retile}.py  # world low-zoom run logic
+    ├── ffl/                       # 6 FFL files: types, lz/gtfs workflows, full pipeline, per-region lz + retile
     └── tools/                     # CLI submission helpers
         ├── _lib/workflows.py      # workflow catalog metadata
         ├── list-workflows.sh

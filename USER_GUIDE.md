@@ -30,7 +30,7 @@ This example provides FFL workflows that orchestrate two pipelines across
 
 The handler implementations come from the [osm-geocoder](https://github.com/rlemke/fwh_osm)
 package — install that first, then this example's FFL workflows use its
-namespaces (`osm.cache.*`, `osm.GraphHopper.*`, `osm.Transit.GTFS.*`).
+namespaces (`osm.cache.*`, `osm.cache.GraphHopper.*`, `osm.Transit.GTFS.*`).
 
 ## Setup
 
@@ -41,13 +41,13 @@ git clone https://github.com/rlemke/fwh_osm.git ~/fw_handlers/fwh_osm
 pip install -e ~/fw_handlers/fwh_osm
 ```
 
-This registers osm-geocoder's handlers via the `facetwork.examples` entry
+This registers osm-geocoder's handlers via the `facetwork.domains` entry
 point. Facetwork's discovery picks them up automatically.
 
 ### 2. Seed both flows into MongoDB
 
 ```bash
-scripts/seed-examples --include "^(osm-lz|osm-geocoder)$"
+fw ffl seed --include "^(osm-lz|osm-geocoder)$"
 ```
 
 The seeder compiles both flows. Continental-lz's `uses osm.cache.NorthAmerica`
@@ -56,10 +56,10 @@ declarations resolve against osm-geocoder's seeded definitions.
 ### 3. Start the runner
 
 ```bash
-scripts/start-runner --example osm-geocoder --example osm-lz -- --log-format text
+fw runner start --domain osm-geocoder --domain osm-lz -- --log-format text
 ```
 
-Note: pass `--example osm-geocoder` (not osm-lz). osm-geocoder's
+Note: `--domain osm-geocoder` is the one that matters. osm-geocoder's
 handlers are what executes; osm-lz contributes only the
 composition workflows.
 
@@ -69,32 +69,35 @@ Open http://localhost:8080, click **Workflows**, and pick one of:
 
 | Workflow | Purpose |
 |----------|---------|
-| `continental.lz.FullContinentalPipeline` | LZ + GTFS bundle |
+| `continental.FullContinentalPipeline` | LZ + GTFS bundle |
 | `continental.lz.BuildContinentalLZ` | LZ across all 14 regions |
-| `continental.gtfs.ContinentalTransitAnalysis` | All 11 transit agencies |
+| `continental.transit.ContinentalTransitAnalysis` | All 11 transit agencies |
 
 Or via CLI:
 
 ```bash
-scripts/run-workflow continental.lz.FullContinentalPipeline
+src/osm_lz/tools/submit.sh --workflow continental.FullContinentalPipeline \
+                          --inputs '{"output_base": "/data/lz-output"}'
 ```
 
 ## Layout
 
 ```
 fwh_osm_lz/
-├── pyproject.toml                            # facetwork.examples entry point
+├── pyproject.toml                            # facetwork.domains entry point
 ├── README.md
 ├── CLAUDE.md
 ├── USER_GUIDE.md
 ├── agent-spec/
 └── src/osm_lz/
-    ├── __init__.py                           # ExamplePackage (no-op register_handlers)
+    ├── __init__.py                           # DomainPackage (no-op register_handlers)
     ├── ffl/
     │   ├── continental_types.ffl             # Shared region/agency schemas
     │   ├── continental_lz_workflows.ffl      # Per-region LZ pipelines
     │   ├── continental_gtfs_workflows.ffl    # Per-agency GTFS pipelines
-    │   └── continental_full.ffl              # FullContinentalPipeline (LZ + GTFS)
+    │   ├── continental_full.ffl              # FullContinentalPipeline (LZ + GTFS)
+    │   ├── us_states_lz.ffl                  # per-region graphs, region + country low-zoom maps
+    │   └── us_states_retile.ffl              # RetileStateMap
     └── tools/
         ├── _lib/workflows.py                 # workflow catalog metadata
         ├── list-workflows.sh

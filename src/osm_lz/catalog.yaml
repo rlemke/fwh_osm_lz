@@ -50,6 +50,46 @@ workflows:
       min_population: Long
       profile: String
       basemap: String
+      memory_gb: Long
+
+  - qualified_name: continental.lz.states.BuildCountryLowZoomMap
+    summary: >-
+      Build a COUNTRY's top low-zoom bands (z2-z4) routed over one graph, so
+      city pairs cross state lines (San Francisco - New York is a z2 pair).
+      The region is a major-roads extract, since the full country does not fit
+      the zoom builder. City pairs are routed, and bypasses/rings detected, as
+      chunk tasks spread across osm hosts, each through the region's own
+      router when one is ready. output_base is relative so the layers land in
+      the shared store and the tile steps can run on any host.
+    tags: [low-zoom, roads, country, vector-tiles, pmtiles, map, chunked-routing, fanout]
+    entry_point: true
+    param_schema:
+      region: String
+      slug: String
+      label: String
+      output_base: String
+      min_population: Long
+      profile: String
+      basemap: String
+      memory_gb: Long
+      route_max_zoom: Long
+      max_pairs: Long
+      chunk_pairs: Long
+      route_width: Int
+      detect_pairs: Long
+
+  - qualified_name: continental.lz.states.RetileStateMap
+    summary: >-
+      Rebuild one region's low-zoom vector tiles and viewer from the layer
+      files an earlier build left behind, without re-routing anything. Use it
+      to apply a new tiling or viewer rule to maps that are already built.
+    tags: [low-zoom, roads, vector-tiles, pmtiles, map, retile, single-region]
+    entry_point: true
+    param_schema:
+      layer_dir: String
+      slug: String
+      label: String
+      basemap: String
 
   - qualified_name: continental.lz.states.BuildStateGraphs
     summary: >-

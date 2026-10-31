@@ -13,8 +13,10 @@ GTFS transit analysis. The handlers it depends on live in fwh_osm.
 fwh_osm_lz/
 ├── pyproject.toml                 # declares the facetwork.domains entry point
 ├── src/osm_lz/__init__.py         # exports `domain: DomainPackage` (no-op register_handlers)
-├── src/osm_lz/ffl/                # 4 FFL files (no Python handlers)
-├── src/osm_lz/tools/              # workflow-submission CLIs (the example's surface)
+├── src/osm_lz/ffl/                # 6 FFL files (no Python handlers)
+├── src/osm_lz/tools/              # workflow-submission CLIs (continental workflows only)
+├── src/osm_lz/world_*.py          # world low-zoom run: plan / merge / publish / retile
+├── tools/lz_world.py, lz_merge.py # world run driver; merge region maps without re-routing
 └── agent-spec/                    # cross-cutting design specs
 ```
 
@@ -24,7 +26,7 @@ fwh_osm_lz/
 |---|---|---|---|---|
 | Defines event facets | yes | yes | yes | **no** |
 | Defines handlers | yes (132+) | yes (13) | yes (17) | **no** |
-| Defines FFL workflows | yes | yes | yes | yes (20) |
+| Defines FFL workflows | yes | yes | yes | yes (24) |
 | `tools/_lib/` | per-domain simulators / real impls | same | per-domain simulators | **workflow catalog metadata** |
 | `tools/*.sh` | one CLI per facet | one CLI per facet | one CLI per facet | **submit / list-workflows** |
 | Depends on another fwh package | no | no | no | **fwh_osm** |
@@ -70,7 +72,8 @@ workflows under `continental.*` if their region story is different.
 1. Add the workflow declaration to the right FFL file under
    `src/osm_lz/ffl/` (or create a new file in the same dir; the
    discovery layer rglobs `*.ffl`).
-2. Add a row to `tools/_lib/workflows.py` so `tools/list-workflows.sh`
+2. Add a `catalog.yaml` entry (summary, tags, `param_schema`) and a row
+   to `tools/_lib/workflows.py` so `tools/list-workflows.sh`
    surfaces it and `tools/submit.sh` can find it without `--library`
    flags.
 3. Re-run `fw ffl seed --include osm-lz` so the new workflow
@@ -86,5 +89,11 @@ workflows under `continental.*` if their region story is different.
   with the other FFL files passed as `--library`.
 - Keep the workflow inputs simple — `String`, `Long`, etc. The
   `tools/submit.sh` helper assumes inputs serialize cleanly to JSON.
-- Don't add `pymongo` or `requests` deps here. This package has no
-  Python operations beyond the metadata catalog.
+- Don't add `pymongo` or `requests` deps here. Apart from the metadata
+  catalog, the only Python is the world low-zoom driver (`tools/lz_world.py`,
+  `tools/lz_merge.py`) and its pure helpers (`src/osm_lz/world_*.py`), which
+  sequence submitted workflows and copy finished maps; they define no facets.
+- The `continental.lz.states` workflows are one region per run on purpose
+  (one GraphHopper server holds one region). `tools/_lib/workflows.py` does
+  not list them, so `submit.sh` cannot find them; they are submitted by
+  `tools/lz_world.py` or from the dashboard.
