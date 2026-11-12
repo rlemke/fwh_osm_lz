@@ -97,3 +97,24 @@ def test_failed_attempt_escalates_the_floor_up_to_the_cap():
     assert escalate_memory_gb(15, 40) == 21  # MG's 15.7 GB peak is now covered
     assert escalate_memory_gb(4, 40) == 6  # small floors still move
     assert escalate_memory_gb(36, 40) == 40
+
+
+def test_road_less_regions_are_skipped_with_a_reason():
+    """Regions whose every zoom layer (or routing graph) came out empty are left
+    out, so a re-run of the world plan does not fail them again."""
+    from osm_lz.world_plan import SKIP
+
+    keys = [
+        "australia-oceania/tokelau",
+        "south-america/south-georgia-and-south-sandwich",
+        "europe/norway/jan-mayen",
+        "europe/vatican-city",
+        "north-america/canada/ontario/pelee-township",
+        "north-america/canada/nunavut/sirmilik-national-park",
+    ]
+    sizes = {k: 2 * MB for k in keys} | {"europe/norway": 900 * MB, "europe/norway/oslo": 50 * MB}
+    n = plan(sizes, continents=["europe"])
+    assert n["europe/vatican-city"].kind == "skip"
+    assert n["europe/norway/jan-mayen"].kind == "skip"
+    assert [x.key for x in leaves(n, "europe")] == ["europe/norway/oslo"]
+    assert all("road" in SKIP[k] for k in keys)

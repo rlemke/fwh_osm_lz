@@ -48,6 +48,14 @@ SKIP: dict[str, str] = {
     "australia-oceania/tokelau": "no roads to map (2026-10-05: every zoom layer was empty)",
     "central-america/mexico": "mapped under north-america/mexico",
     "south-america/south-georgia-and-south-sandwich": "no roads to map (2026-10-16: every zoom layer was empty)",
+    "europe/norway/jan-mayen": "no roads to map (2026-10-19/20: every zoom layer was empty, twice)",
+    "europe/vatican-city": "no roads to map at low zoom (2026-10-20: every zoom layer was empty, twice)",
+    "north-america/canada/ontario/pelee-township": (
+        "no roads to map at low zoom (2026-10-20: every zoom layer was empty, twice)"
+    ),
+    "north-america/canada/nunavut/sirmilik-national-park": (
+        "no road network (2026-10-20: the routing graph came out empty)"
+    ),
     "central-america/usa-virgin-islands": "same as central-america/united-states-virgin-islands",
     "central-america/caribbean": "an overlapping multi-island extract",
     "europe/czech-republic": "same country as europe/czechia",
